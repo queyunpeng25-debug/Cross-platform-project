@@ -1,0 +1,41 @@
+{
+  "portraits": {
+    "kaisa_nyberg": {
+      "title": "Kaisa Nyberg",
+      "subtitle": "Cryptography · Computer Science",
+      "body": "Kaisa Nyberg is Professor Emerita of Cryptology at Aalto University. She led the Cryptography research group in the Department of Computer Science until 2016. Her work connects mathematical cryptography with the protection of information and digital communication.",
+      "task": "Think about it: which parts of a secure phone message might depend on cryptography?",
+      "source": "https://users.ics.aalto.fi/knyberg/"
+    },
+    "erkki_oja": {
+      "title": "Erkki Oja",
+      "subtitle": "Machine Learning · Neural Networks",
+      "body": "Erkki Oja is Professor Emeritus of Computer Science and Engineering at Aalto University. His research includes neural networks, unsupervised learning, statistical pattern recognition, computer vision, and signal and data analysis. He is also known for Oja's learning rule and pioneering work in machine learning.",
+      "task": "Think about it: how can a machine learn useful structure without being given every answer?",
+      "source": "https://users.ics.aalto.fi/oja/"
+    },
+    "hans_andersin": {
+      "title": "Hans Andersin",
+      "subtitle": "Computing · Technology Education",
+      "body": "Hans Andersin (1930–2010) was a Finnish computing pioneer and professor at Helsinki University of Technology. He helped introduce computer technology and computing education in Finland, and served as the first professor of computer science at the university from 1968.",
+      "task": "Think about it: what changes when a new technology becomes part of university teaching?",
+      "source": "https://www.aalto.fi/sites/g/files/flghsv161/files/2020-03/Arkistoluettelo%20Andersin%20Hans.pdf"
+    },
+    "teuvo_kohonen": {
+      "title": "Teuvo Kohonen",
+      "subtitle": "Neural Networks · Self-Organizing Maps",
+      "body": "Teuvo Kohonen (1934–2021) was an Academician and Professor Emeritus whose work helped put Finnish artificial intelligence research on the world map. He is best known for self-organizing maps, neural networks, associative memories, and pattern recognition.",
+      "task": "Think about it: how could similar data points be arranged on a two-dimensional map?",
+      "source": "https://users.ics.aalto.fi/teuvo/"
+    }
+  },
+  "qr": {
+    "cs-guide://point/portrait_kaisa": {
+      "title": "Portrait Station · Cryptography",
+      "subtitle": "02 / People and Computer Science",
+      "body": "This station introduces Kaisa Nyberg, Professor Emerita of Cryptology at Aalto University. Point the AR camera at the complete portrait and move slowly until the information panel is anchored beside the image.",
+      "task": "Try the portrait-recognition mode instead of using a QR code to open the biography.",
+      "source": "https://users.ics.aalto.fi/knyberg/"
+    }
+  }
+}

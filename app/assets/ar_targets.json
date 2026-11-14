@@ -1,0 +1,30 @@
+[
+  {
+    "id": "kaisa_nyberg",
+    "image": "assets/portraits/kaisa_nyberg.jpg",
+    "physicalWidthMeters": 0.8,
+    "widthIsMeasured": true,
+    "panel": "assets/ar_panels/kaisa_nyberg.glb"
+  },
+  {
+    "id": "erkki_oja",
+    "image": "assets/portraits/erkki_oja.jpg",
+    "physicalWidthMeters": 0.8,
+    "widthIsMeasured": true,
+    "panel": "assets/ar_panels/erkki_oja.glb"
+  },
+  {
+    "id": "hans_andersin",
+    "image": "assets/portraits/hans_andersin.jpg",
+    "physicalWidthMeters": 0.8,
+    "widthIsMeasured": true,
+    "panel": "assets/ar_panels/hans_andersin.glb"
+  },
+  {
+    "id": "teuvo_kohonen",
+    "image": "assets/portraits/teuvo_kohonen.jpg",
+    "physicalWidthMeters": 0.8,
+    "widthIsMeasured": true,
+    "panel": "assets/ar_panels/teuvo_kohonen.glb"
+  }
+]
