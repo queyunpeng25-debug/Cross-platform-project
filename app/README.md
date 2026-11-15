@@ -1,6 +1,6 @@
 # CS Explorer Flutter App
 
-请先阅读项目根目录 `../README.md` 的中文配置、运行与测试说明。
+Please read `../README.md` in the project root for setup, running, and testing instructions.
 
 A new Flutter project.
 
