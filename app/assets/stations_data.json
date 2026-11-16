@@ -1,0 +1,371 @@
+{
+  "stations": [
+    {
+      "id": "lobby",
+      "title": "CS Building Lobby (\"T-talo\")",
+      "subtitle": "Award-winning 1998 steel-and-glass atrium, twin mathematical orbs overhead, and your campus starting point.",
+      "floor": 1,
+      "floorLabel": "1st Floor · Konemiehentie 2",
+      "scanHintParenthetical": "(Lobby welcome QR)",
+      "triggerModeSummary": "Confirmed: Physical Lobby QR code opens Web App directly",
+      "heroAsset": "assets/stations/lobby.jpg",
+      "unlockedByDefault": true,
+      "hasPuzzlePiece": true,
+      "puzzleCtaLabel": "Catch AR Puzzle Piece",
+      "secondaryActionKind": "openScanner",
+      "secondaryActionLabel": "Open Scanner",
+      "owner": "andrea",
+      "normalizedX": 0.48,
+      "normalizedY": 0.82,
+      "paragraphs": [
+        "Welcome to \"T-talo\" (Tietotekniikan talo)! Opened in October 1998 by architects Brunow & Maunula, this hub won Finland's Steel Structure of the Year award and houses Aalto's largest department (400+ staff) under a 116.5 kWp rooftop solar plant. That is also why every lecture hall here starts with T (T1–T8).",
+        "Look up at the two 2-meter wooden spheres suspended above you: titled \"Aalto\" (2013), they were built by mathematical sculptor George W. Hart and 25 Aalto students using 120 plywood pieces and 780 zip-ties — no glue or screws! Like the double 'A' in Aalto, they look identical until you spot that one is left-handed and the other is its mirror-image twin."
+      ],
+      "callouts": [
+        {
+          "icon": "signs",
+          "title": "The 'A?' Window & Halls T1–T8",
+          "body": "Spot the giant A? / A! emblem on the glass facade? Designer Rasmus Snabb created it so everything at Aalto can be questioned (?), celebrated (!), or discussed (\"). Overhead signs lead to 300-seat hall T1 and upper floors."
+        },
+        {
+          "icon": "pool",
+          "title": "Free Lobby Billiards Table",
+          "body": "The pool table is free for everyone — cues and balls aren't left out, so just knock on any 1st-floor Guild room (like Tietokilta C114) to borrow them for free."
+        },
+        {
+          "icon": "coat",
+          "title": "Wardrobe Corner & Metro Tip",
+          "body": "Hang heavy winter coats on the entrance racks. Driving? Back-lot time-disc spots (1–4h) get fined fast in Espoo — most locals take the Metro (Tietotie exit, 220m away) or a campus bike!"
+        },
+        {
+          "icon": "booking",
+          "title": "Green/Red Room Tablets (Aalto Space)",
+          "body": "Tablets outside pods like C130e glow green when free. Scan the corner QR with the Aalto Space app (famously teased by CS students for 12 updates of 'Small fixes and improvements') or use booking.aalto.fi."
+        },
+        {
+          "icon": "food",
+          "title": "Sodexo Lunch & Kela Subway Ahead",
+          "body": "Walk straight past the atrium for ~3.10 € student lunches and one of Finland's rare Kela-subsidized campus Subways."
+        }
+      ],
+      "guilds": []
+    },
+    {
+      "id": "greenhouse",
+      "title": "Learning Hub Greenhouse",
+      "subtitle": "Born from a 2012 student brainstorm that asked for a jungle, pods, and a real campus dog.",
+      "floor": 1,
+      "floorLabel": "1st Floor · Room C130a",
+      "scanHintParenthetical": "(scan Greenhouse front & 'Learning Hub' sign)",
+      "triggerModeSummary": "Confirmed visual scan: wooden & glass Greenhouse front with Learning Hub sign",
+      "heroAsset": "assets/stations/greenhouse_1f.jpg",
+      "unlockedByDefault": false,
+      "hasPuzzlePiece": true,
+      "puzzleCtaLabel": "Catch AR Puzzle Piece",
+      "secondaryActionKind": "greenhouseMinigame",
+      "secondaryActionLabel": "Play Greenhouse Activity",
+      "owner": "andrea",
+      "normalizedX": 0.45,
+      "normalizedY": 0.52,
+      "paragraphs": [
+        "Until autumn 2012, this corner was an empty department library. A student-led redesign workshop (spearheaded by Juuso Koskinen) pitched post-its asking for \"brainstorming pods, a jungle, and a real dog.\" They didn't get the dog — so they built this wooden Greenhouse (C130a) and named neighboring meeting rooms after veggies like Tomato (C134)!",
+        "Right beside the timber frame stands the New Doctoral Dissertations shelf (Uudet väitöskirjat), part of a centuries-old Finnish academic tradition."
+      ],
+      "callouts": [
+        {
+          "icon": "study",
+          "title": "Public PhD Theses & The Silk Top Hat",
+          "body": "In Finland, PhD defenses are public — theses hang here beforehand so anyone can read them and question the candidate! Passing earns a Karonkka gala dinner and Aalto's black silk Doctoral Top Hat (no sword for tech doctors!)."
+        },
+        {
+          "icon": "booking",
+          "title": "Veggie Rooms & Aalto Space",
+          "body": "Quiet group chatter is welcome inside the Greenhouse; if it is full, grab nearby pods like Tomato (C134) on Aalto Space."
+        }
+      ],
+      "guilds": []
+    },
+    {
+      "id": "guilds",
+      "title": "Student Guild Rooms",
+      "subtitle": "One 'parent' guild, three colorful overall traditions, live sofa webcams, and pocket-change coffee.",
+      "floor": 1,
+      "floorLabel": "1st Floor · C114, A117 & A120b",
+      "scanHintParenthetical": "(scan a guild door logo: TiK, PALLASKATU, or DATABASE)",
+      "triggerModeSummary": "Door logo scan: Tietokilta (C114), Data Guild (DATABASE A120b), or Athene (PALLASKATU A117)",
+      "heroAsset": "assets/stations/guilds_1f.jpg",
+      "unlockedByDefault": false,
+      "hasPuzzlePiece": true,
+      "puzzleCtaLabel": "Catch AR Puzzle Piece",
+      "owner": "andrea",
+      "normalizedX": 0.28,
+      "normalizedY": 0.64,
+      "paragraphs": [
+        "Fun campus genealogy: Tietokilta (founded 1986, shiny all-black overalls) is the 'parent' guild of both neighbors! When Information Networks launched Athene (2003) and Data Science launched Data Guild (2019 — Otaniemi's first English-primary Teekkari guild!), both kept a tribute on their overalls: Athene wears forest green with a black sleeve, and Data Guild pairs black overalls with a silver sleeve.",
+        "Inside these kiltahuoneet you will find cheap or free coffee, couches, event posters, pool cues for the Lobby table, and even a sewing machine for overall patches."
+      ],
+      "callouts": [
+        {
+          "icon": "signs",
+          "title": "Why Does Athene Say 'PALLASKATU'?",
+          "body": "Above room A117 (OLOhuone / 'Olkkari') hangs a PALLASKATU street sign — a double pun on Greek goddess Pallas Athene and the famous pink Monopoly street! Members even check its 24/7 live 'OLOcam' before leaving home."
+        },
+        {
+          "icon": "coffee",
+          "title": "Base64 Jokes & 'Database' Next Door",
+          "body": "Tietokilta's website hides a Base64 secret decoding to 'Mee töihin' ('Go to work!'), while Data Guild's lounge across from Subway is named Database (A120b) and hosts an annual ball called Epoch."
+        }
+      ],
+      "guilds": [
+        {
+          "id": "tietokilta",
+          "name": "Tietokilta · Room C114",
+          "shortTag": "TiK · CS · 1986",
+          "description": "Shiny black overalls with an @ tassel, Alkorytmi magazine, pool cue & sewing-machine loans, and coffee since 1986.",
+          "accentHex": "#262523",
+          "links": [
+            {
+              "label": "Website",
+              "url": "https://tietokilta.fi/en",
+              "kind": "website"
+            },
+            {
+              "label": "Telegram",
+              "url": "https://t.me/tietokilta",
+              "kind": "telegram"
+            },
+            {
+              "label": "Instagram",
+              "url": "https://www.instagram.com/tietokilta/",
+              "kind": "instagram"
+            },
+            {
+              "label": "Linktree",
+              "url": "https://linktr.ee/tietokilta",
+              "kind": "linktree"
+            }
+          ]
+        },
+        {
+          "id": "athene",
+          "name": "Athene · OLOhuone (A117)",
+          "shortTag": "PALLASKATU",
+          "description": "Info Networks guild under the PALLASKATU sign — home to the namubuffa candy bar, green-and-black overalls, and live OLOcam.",
+          "accentHex": "#5C554C",
+          "links": [
+            {
+              "label": "Website",
+              "url": "https://athene.fi/en/",
+              "kind": "website"
+            },
+            {
+              "label": "Live OLOcam",
+              "url": "https://athene.fi/olocam/",
+              "kind": "linktree"
+            },
+            {
+              "label": "Instagram",
+              "url": "https://www.instagram.com/athenefinland/",
+              "kind": "instagram"
+            }
+          ]
+        },
+        {
+          "id": "dataguild",
+          "name": "Data Guild · Database (A120b)",
+          "shortTag": "DATABASE",
+          "description": "Otaniemi's first English-primary guild — black-and-silver overalls, Bitwards access, and neural-net Epoch traditions.",
+          "accentHex": "#6E665C",
+          "links": [
+            {
+              "label": "Website",
+              "url": "https://dataguild.fi/",
+              "kind": "website"
+            },
+            {
+              "label": "Database Room",
+              "url": "https://dataguild.fi/index.php/database",
+              "kind": "linktree"
+            },
+            {
+              "label": "Instagram",
+              "url": "https://www.instagram.com/dataguild/",
+              "kind": "instagram"
+            },
+            {
+              "label": "Telegram",
+              "url": "https://t.me/dataguild",
+              "kind": "telegram"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "locked_corridors",
+      "title": "Locked Research Wings & PCB Café",
+      "subtitle": "Home to FCAI, HIIT, ELLIS Institute Finland, and a giant floor-to-ceiling motherboard mural.",
+      "floor": 2,
+      "floorLabel": "1st–2nd Floor · Left & Right Wings",
+      "scanHintParenthetical": "(scan locked wing door or 2F circuit wall)",
+      "triggerModeSummary": "On-site choice: keycard wing entrance or 2nd-floor PCB circuit mural",
+      "heroAsset": "assets/stations/locked_corridors_2f.jpg",
+      "unlockedByDefault": false,
+      "hasPuzzlePiece": true,
+      "puzzleCtaLabel": "Catch AR Puzzle Piece",
+      "owner": "andrea",
+      "normalizedX": 0.72,
+      "normalizedY": 0.48,
+      "paragraphs": [
+        "No badge yet? Behind the keycard glass doors on both sides of the Main Hall work 400+ CS researchers and three major research hubs: the Finnish Center for AI (FCAI), HIIT, and ELLIS Institute Finland (linked to Europe's LUMI supercomputer).",
+        "Knowing what sits inside each wing saves confusion whenever you visit Academic Services, meet a TA, or interview for a summer research or thesis topic."
+      ],
+      "callouts": [
+        {
+          "icon": "coffee",
+          "title": "2nd-Floor Staff Café & Giant PCB Wall",
+          "body": "A full-wall Printed Circuit Board mural backdrops the 2nd-floor researcher lounge — powering Finland's world-record coffee consumption during 2 PM lab breaks."
+        },
+        {
+          "icon": "lab",
+          "title": "Labs, Offices & Emeritus Lounge",
+          "body": "Houses ML, Cryptography, Systems, and HCI groups, administrative support desks, plus the 3rd-floor Emeritus and Donors' Lounges."
+        },
+        {
+          "icon": "key",
+          "title": "Keycard Meeting Rooms",
+          "body": "Internal seminar rooms require an activated Aalto token (or Bitwards) — if meeting a thesis advisor inside, message them from the glass door!"
+        }
+      ],
+      "guilds": []
+    },
+    {
+      "id": "study_places",
+      "title": "3rd Floor Loft & Call Pods",
+      "subtitle": "Peaceful desks beneath the 1998 Steel Prize skylights, plus walk-in interview booths.",
+      "floor": 3,
+      "floorLabel": "3rd Floor · Parvi T1 & Loft",
+      "scanHintParenthetical": "(find sign '3' by the 3rd-floor stairs)",
+      "triggerModeSummary": "3rd floor main stairs arrival sign",
+      "heroAsset": "assets/stations/study_3f.jpg",
+      "unlockedByDefault": false,
+      "hasPuzzlePiece": true,
+      "puzzleCtaLabel": "Catch AR Puzzle Piece",
+      "owner": "andrea",
+      "normalizedX": 0.50,
+      "normalizedY": 0.25,
+      "paragraphs": [
+        "When the Harald Herlin Learning Centre is packed during exam week, keep climbing to the 3rd-floor loft (Parvi T1). Right under the exposed 1998 Steel Prize trusses and angled Nordic skylights, it stays calm almost all day because half the visitors forget the stairs go past floor two!",
+        "Built into the brick walls on the 2nd and 3rd floors you will also spot narrow glass single-person phone booths."
+      ],
+      "callouts": [
+        {
+          "icon": "quiet",
+          "title": "Unbookable Ad-Hoc Call Pods (2F & 3F)",
+          "body": "Notice the 'Please use only for ad hoc meetings' sign? Unlike group pods, these booths cannot be booked on Aalto Space — they are walk-in lifesavers for quick Zoom calls and Jan–Mar summer job interviews!"
+        }
+      ],
+      "guilds": []
+    },
+    {
+      "id": "tuas_bridge",
+      "title": "Indoor Skybridge to TUAS",
+      "subtitle": "The -20 °C winter lifesaver connecting CS straight to Maarintie 8 without putting on a coat.",
+      "floor": 1,
+      "floorLabel": "1st Floor Tip → 2nd Floor Bridge",
+      "scanHintParenthetical": "(scan 1F shortcut sign near TUAS stairs)",
+      "triggerModeSummary": "Confirmed: Shortcut sign + QR on 1st floor pointing to 2nd floor bridge",
+      "heroAsset": "assets/stations/tuas_bridge_2f.jpg",
+      "unlockedByDefault": false,
+      "hasPuzzlePiece": true,
+      "puzzleCtaLabel": "Catch AR Puzzle Piece",
+      "owner": "andrea",
+      "normalizedX": 0.22,
+      "normalizedY": 0.20,
+      "paragraphs": [
+        "Looking for a ground-floor exit toward TUAS (Maarintie 8)? Don't step out into sideways slush or -15 °C snow! CS regulars leave their winter coats in the Lobby and climb one flight up to the 2nd-floor heated glass skybridge ('Kulku Maarintie 8').",
+        "Across the bridge inside the 2003 TUAS building await a second student restaurant (Food & Co TUAS), Electrical & Industrial Engineering, the LUMI AI Factory Hub, and AS guild (another Tietokilta spin-off wearing purple overalls with a black sleeve!)."
+      ],
+      "callouts": [
+        {
+          "icon": "bridge",
+          "title": "Two-Minute Coatless Hopping",
+          "body": "Follow 'Passage to Maarintie 8' on the 2nd floor — ideal for back-to-back lectures or checking TUAS's lunch line in sneakers mid-January."
+        }
+      ],
+      "guilds": []
+    },
+    {
+      "id": "portraits",
+      "title": "CS Pioneers Portrait Gallery",
+      "subtitle": "From AES & Bluetooth encryption to Self-Organizing Maps — plus a real typo on the wall!",
+      "floor": 1,
+      "floorLabel": "1st Floor · Gallery",
+      "scanHintParenthetical": "(point AR camera at a 1F portrait)",
+      "triggerModeSummary": "AR portrait image recognition or pioneer QR plaque",
+      "heroAsset": "assets/stations/portraits_1f.jpg",
+      "unlockedByDefault": false,
+      "hasPuzzlePiece": true,
+      "puzzleCtaLabel": "Catch AR Puzzle Piece",
+      "secondaryActionKind": "portraitArScanner",
+      "secondaryActionLabel": "Open 3D AR Portrait View",
+      "owner": "yunpeng",
+      "normalizedX": 0.62,
+      "normalizedY": 0.60,
+      "paragraphs": [
+        "Every time you pair Bluetooth headphones or open an HTTPS site, you rely on math by Professor Emerita Kaisa Nyberg (AES S-boxes & Bluetooth Secure Pairing)! Beside her hang AI pioneer Academician Teuvo Kohonen (Self-Organizing Maps), Erkki Oja (Oja's Rule & FastICA), and Hans 'Hasse' Andersin, who worked on Finland's 1950s 'electric brain' ESKO before becoming TKK's first CS professor in 1968.",
+        "Eagle-eyed Easter egg: check the physical brass plaque under Erkki Oja's frame — it actually has a real typo reading 'Eikki Oja'!"
+      ],
+      "callouts": [],
+      "guilds": []
+    },
+    {
+      "id": "computers",
+      "title": "Evolution of Computers",
+      "subtitle": "From Microsoft's 1984 XENIX Unix and Steve Jobs' NeXTstation to 'Moominpappa's' laptop.",
+      "floor": 2,
+      "floorLabel": "2nd Floor · Exhibit",
+      "scanHintParenthetical": "(scan 2F Retro PC exhibit QR)",
+      "triggerModeSummary": "2nd floor display case QR code or visual sign match",
+      "heroAsset": "assets/stations/computers_2f.jpg",
+      "unlockedByDefault": false,
+      "hasPuzzlePiece": true,
+      "puzzleCtaLabel": "Catch AR Puzzle Piece",
+      "secondaryActionKind": "retroPcExhibit",
+      "secondaryActionLabel": "Explore Retro PCs & Price Game",
+      "owner": "yunpeng",
+      "normalizedX": 0.36,
+      "normalizedY": 0.40,
+      "paragraphs": [
+        "This 2nd-floor showcase spans TKK's Unix desktops (1984 IBM PC/AT running Microsoft XENIX), Steve Jobs' 1990 NeXTstation (whose NeXTSTEP OS birthed the first Web browser at CERN and today's macOS/iOS!), Hollywood's 3D SGI O2, and the 1998 iMac G3 launched the exact year T-talo opened.",
+        "Don't miss the yellow Moomin Laptop tucked inside: its official curator label is a deadpan Otaniemi joke crediting hardware design to 'Moominpappa'!"
+      ],
+      "callouts": [],
+      "guilds": []
+    },
+    {
+      "id": "canteen",
+      "title": "Sodexo Lunch & Kela Subway",
+      "subtitle": "~3.10 € student warm meals, a Kela-subsidized Subway, and Otaniemi's open-source menu tracker.",
+      "floor": 1,
+      "floorLabel": "1st Floor · Dining",
+      "scanHintParenthetical": "(scan Canteen QR or Subway logo)",
+      "triggerModeSummary": "Canteen entrance QR code or Subway logo scan",
+      "heroAsset": "assets/stations/canteen_1f.jpg",
+      "unlockedByDefault": false,
+      "hasPuzzlePiece": true,
+      "puzzleCtaLabel": "Catch AR Puzzle Piece",
+      "secondaryActionKind": "canteenMenuAndReviews",
+      "secondaryActionLabel": "Open Menu & Dish Reviews",
+      "owner": "juhani",
+      "normalizedX": 0.56,
+      "normalizedY": 0.72,
+      "paragraphs": [
+        "Flash your Frank or Slice student card at Restaurant Sodexo Tietotekniikantalo for a Kela-subsidized ~3.10 € lunch (main dish, salad bar, rye bread, and milk/piimä). Even rarer: the campus Subway next door offers an official Kela-subsidized 'Sub of the Day' (Päivän Subi) on weekdays!",
+        "Local student pro-tip: Otaniemi coders built kanttiinit.fi — an open-source tracker comparing every campus cafeteria menu live. Diet tags: L = lactose-free, G = gluten-free, M = dairy-free, Veg = vegan."
+      ],
+      "callouts": [],
+      "guilds": []
+    }
+  ]
+}

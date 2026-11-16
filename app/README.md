@@ -1,19 +1,12 @@
-# CS Explorer Flutter App
+# CS Explorer — Flutter App (`app/`)
 
-Please read `../README.md` in the project root for setup, running, and testing instructions.
+## Run Locally on Port 8080
 
-A new Flutter project.
+```powershell
+flutter pub get
+flutter run -d web-server --web-port 8080
+```
 
-## Getting Started
+Open **http://localhost:8080** in your browser.
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+For full project documentation, architecture, native Android/iOS AR instructions, and GitHub Pages deployment, see **[`../README.md`](../README.md)** and **[`../docs/TEAM_SLOTS.md`](../docs/TEAM_SLOTS.md)**.

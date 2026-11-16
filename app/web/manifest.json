@@ -1,0 +1,11 @@
+{
+  "name": "CS Explorer — Aalto CS Building Guide",
+  "short_name": "CS Explorer",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#FAF9F6",
+  "theme_color": "#214B3C",
+  "description": "Interactive cross-platform guide, scanner, map, and AR puzzle hunt for the Aalto University Computer Science building.",
+  "orientation": "portrait-primary",
+  "prefer_related_applications": false
+}
