@@ -1,23 +1,47 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:zenify/zenify.dart';
+
+import 'package:ar_flutter_plugin_plus/datatypes/config_planedetection.dart';
+import 'package:ar_flutter_plugin_plus/managers/ar_anchor_manager.dart';
+import 'package:ar_flutter_plugin_plus/managers/ar_location_manager.dart';
+import 'package:ar_flutter_plugin_plus/managers/ar_object_manager.dart';
+import 'package:ar_flutter_plugin_plus/managers/ar_session_manager.dart';
+import 'package:ar_flutter_plugin_plus/models/ar_hittest_result.dart';
+import 'package:ar_flutter_plugin_plus/widgets/ar_view.dart';
 
 import '../../core/controllers.dart';
 import '../../core/translation_service.dart';
 import '../../ui/puzzle_icon.dart';
+import 'puzzle_config.dart';
+
+/// Sealed hierarchy representing runtime puzzle image sources.
+sealed class PuzzleImageSource {
+  const PuzzleImageSource();
+}
+
+class AssetPuzzleImageSource extends PuzzleImageSource {
+  const AssetPuzzleImageSource(this.assetPath);
+  final String assetPath;
+}
+
+class MemoryPuzzleImageSource extends PuzzleImageSource {
+  const MemoryPuzzleImageSource(this.bytes);
+  final Uint8List bytes;
+}
 
 /// Tabletop AR Sliding-Tile Final Puzzle (`3x3` square tiles with 1 corner hole):
-/// 1. Live camera / tabletop marker feed (`cs-guide://marker/tabletop` or manual
-///    table placement fallback, ready for Nico's physical table markers).
-/// 2. Collected tiles spawn floating around the screen and settle onto the
-///    3D perspective-tilted tabletop frame.
-/// 3. User slides adjacent tiles into the single empty slot ("hole") until all
-///    8 tiles align, leaving the hole in the bottom-right corner.
-/// 4. Once aligned, the missing 9th corner tile automatically materializes into
-///    the corner hole to complete the full seamless photograph!
+/// 1. Dynamic master image slicing into 3x3 grid via code.
+/// 2. Live camera / tabletop marker feed OR Native ARCore/ARKit plane anchoring.
+/// 3. Runtime image picker to swap graphics during oral exams and testing.
+/// 4. "Solve / Skip" fallback button for Demo Mode.
 class ArTabletopPuzzleScreen extends StatefulWidget {
   const ArTabletopPuzzleScreen({
     super.key,
@@ -37,10 +61,12 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
   static const int _gridSize = 3;
   static const int _totalCells = _gridSize * _gridSize; // 9
   static const int _holeTileId = _totalCells - 1; // 8 (bottom-right corner)
-  static const String _puzzleImageAsset = 'assets/stations/greenhouse_1f.jpg';
 
   late final AnimationController _spawnController;
   late final AnimationController _cornerFillController;
+
+  /// Current active image source (defaults to [kPuzzleImageAsset]).
+  PuzzleImageSource _imageSource = const AssetPuzzleImageSource(kPuzzleImageAsset);
 
   /// Maps board cell `0..8` -> `tileId` (`0..7` are image tiles, `8` is the hole).
   late List<int> _board;
@@ -51,8 +77,17 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
   bool _anchoredOnTable = true;
   bool _perspectiveTilt = true;
   bool _useCameraFeed = true;
+  bool _useNativeAr = false;
   bool _isSolved = false;
   int _moves = 0;
+
+  // Native AR session reference
+  ARSessionManager? _arSessionManager;
+
+  bool get _isNativeArAvailable =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
 
   @override
   void initState() {
@@ -73,6 +108,7 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
   void dispose() {
     _spawnController.dispose();
     _cornerFillController.dispose();
+    _arSessionManager?.dispose();
     super.dispose();
   }
 
@@ -89,7 +125,6 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
           .where((cell) => cell != previousHoleCell)
           .toList();
       final chosen = neighbors[rng.nextInt(neighbors.length)];
-      // Record the previous hole cell so tapping it later reverses this move
       _solutionStack.add(holeCell);
       next[holeCell] = next[chosen];
       next[chosen] = _holeTileId;
@@ -150,6 +185,17 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
     _onTapCell(nextCell);
   }
 
+  void _solveInstantly() {
+    if (_isSolved) return;
+    setState(() {
+      _board = List<int>.generate(_totalCells, (i) => i);
+      _moves++;
+      _isSolved = true;
+      _cornerFillController.forward(from: 0);
+    });
+    HapticFeedback.heavyImpact();
+  }
+
   bool _checkSolved() {
     for (var i = 0; i < _totalCells; i++) {
       if (_board[i] != i) return false;
@@ -163,15 +209,87 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
     return Offset(math.cos(angle) * radius, math.sin(angle) * radius - 30);
   }
 
+  void _onARViewCreated(
+    ARSessionManager sessionManager,
+    ARObjectManager objectManager,
+    ARAnchorManager anchorManager,
+    ARLocationManager locationManager,
+  ) {
+    _arSessionManager = sessionManager;
+    sessionManager.onPlaneOrPointTap = (List<ARHitTestResult> hits) {
+      if (hits.isNotEmpty && mounted) {
+        HapticFeedback.selectionClick();
+        setState(() {
+          _anchoredOnTable = true;
+        });
+      }
+    };
+  }
+
+  Future<void> _openImagePickerSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) => _ImagePickerSheet(
+        onPickFromGallery: () async {
+          Navigator.of(sheetContext).pop();
+          try {
+            final picker = ImagePicker();
+            final file = await picker.pickImage(source: ImageSource.gallery);
+            if (file != null) {
+              final bytes = await file.readAsBytes();
+              if (mounted) {
+                setState(() {
+                  _imageSource = MemoryPuzzleImageSource(bytes);
+                });
+                _scrambleNewBoard(shuffleSteps: 16);
+              }
+            }
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: TrText('Unable to pick image: $e')),
+              );
+            }
+          }
+        },
+        onSelectPreset: (preset) {
+          Navigator.of(sheetContext).pop();
+          setState(() {
+            _imageSource = AssetPuzzleImageSource(preset.assetPath);
+          });
+          _scrambleNewBoard(shuffleSteps: 16);
+        },
+        onResetDefault: () {
+          Navigator.of(sheetContext).pop();
+          setState(() {
+            _imageSource = const AssetPuzzleImageSource(kPuzzleImageAsset);
+          });
+          _scrambleNewBoard(shuffleSteps: 16);
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final settings = Zen.findOrNull<AppSettingsController>();
+    final isDemoMode = settings?.demoUnlockAll.value ?? false;
+    final showImagePickerButton = isDemoMode || kAllowRuntimeImagePicker;
+
     return Scaffold(
       backgroundColor: const Color(0xFF141312),
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // 1. Live AR Camera Tabletop Feed (with automatic matte tabletop fallback)
-          if (_useCameraFeed)
+          // 1. Background Feed: Native ARView OR MobileScanner OR Studio Backdrop
+          if (_useNativeAr && _isNativeArAvailable)
+            ARView(
+              onARViewCreated: _onARViewCreated,
+              planeDetectionConfig: PlaneDetectionConfig.horizontal,
+            )
+          else if (_useCameraFeed)
             MobileScanner(
               onDetect: (capture) {
                 for (final code in capture.barcodes) {
@@ -188,7 +306,7 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
           else
             const _StudioTabletopBackdrop(),
 
-          // Subtle tabletop vignette
+          // Tabletop ambient vignette
           Positioned.fill(
             child: IgnorePointer(
               child: DecoratedBox(
@@ -270,7 +388,14 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
                         ),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 8),
+                    if (showImagePickerButton)
+                      _TopGlassButton(
+                        icon: Icons.palette_outlined,
+                        semanticsLabel: 'Change Test Image',
+                        onTap: _openImagePickerSheet,
+                      ),
+                    const SizedBox(width: 8),
                     _TopGlassButton(
                       icon: _perspectiveTilt
                           ? Icons.view_in_ar_rounded
@@ -342,7 +467,6 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
 
                         final gap = _isSolved ? (3.0 * (1.0 - cornerT)) : 3.0;
 
-                        // Locate where each tileId currently sits on the board
                         final cellOfTile = <int, int>{};
                         for (var cell = 0; cell < _totalCells; cell++) {
                           cellOfTile[_board[cell]] = cell;
@@ -354,7 +478,7 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
                           child: Stack(
                             clipBehavior: Clip.none,
                             children: [
-                              // Recessed tabletop empty grid bed (visible at the hole)
+                              // Recessed grid bed
                               Positioned.fill(
                                 child: DecoratedBox(
                                   decoration: BoxDecoration(
@@ -377,7 +501,7 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
                                   spawnProgress: spawnT,
                                 ),
 
-                              // Missing 9th Corner Piece (tileId 8) — fills the bottom-right hole upon completion!
+                              // Missing 9th Corner Piece (tileId 8)
                               if (_isSolved)
                                 Positioned(
                                   left: 2 * tileSize + gap * 0.5,
@@ -393,7 +517,7 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
                                       tileId: _holeTileId,
                                       gridSize: _gridSize,
                                       fullBoardSize: boardSize,
-                                      assetPath: _puzzleImageAsset,
+                                      imageSource: _imageSource,
                                       borderRadius: _isSolved && cornerT > 0.95
                                           ? 0
                                           : 8,
@@ -412,7 +536,7 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
             ),
           ),
 
-          // 4. Bottom Translucent Instructions & Tabletop Controls
+          // 4. Bottom Controls & Instructions
           Positioned(
             left: 16,
             right: 16,
@@ -448,7 +572,7 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
                         ),
                         const SizedBox(height: 12),
                         Wrap(
-                          spacing: 10,
+                          spacing: 8,
                           runSpacing: 8,
                           alignment: WrapAlignment.center,
                           children: [
@@ -463,17 +587,42 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
                                 label: 'Hint Move',
                                 onTap: _playHintStep,
                               ),
-                            _BottomControlChip(
-                              icon: _useCameraFeed
-                                  ? Icons.videocam_outlined
-                                  : Icons.videocam_off_outlined,
-                              label: _useCameraFeed
-                                  ? 'AR Camera On'
-                                  : 'Tabletop Studio',
-                              onTap: () => setState(
-                                () => _useCameraFeed = !_useCameraFeed,
+                            if (_isNativeArAvailable)
+                              _BottomControlChip(
+                                icon: _useNativeAr
+                                    ? Icons.layers_outlined
+                                    : Icons.view_in_ar_rounded,
+                                label: _useNativeAr
+                                    ? '3D Tabletop'
+                                    : 'Native AR Plane',
+                                onTap: () => setState(() {
+                                  _useNativeAr = !_useNativeAr;
+                                }),
                               ),
-                            ),
+                            if (!_useNativeAr)
+                              _BottomControlChip(
+                                icon: _useCameraFeed
+                                    ? Icons.videocam_outlined
+                                    : Icons.videocam_off_outlined,
+                                label: _useCameraFeed
+                                    ? 'AR Camera On'
+                                    : 'Tabletop Studio',
+                                onTap: () => setState(
+                                  () => _useCameraFeed = !_useCameraFeed,
+                                ),
+                              ),
+                            if (showImagePickerButton)
+                              _BottomControlChip(
+                                icon: Icons.image_outlined,
+                                label: 'Change Image',
+                                onTap: _openImagePickerSheet,
+                              ),
+                            if (isDemoMode && !_isSolved)
+                              _BottomControlChip(
+                                icon: Icons.fast_forward_rounded,
+                                label: 'Solve / Skip (Demo)',
+                                onTap: _solveInstantly,
+                              ),
                           ],
                         ),
                       ],
@@ -522,7 +671,7 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
             tileId: tileId,
             gridSize: _gridSize,
             fullBoardSize: boardSize,
-            assetPath: _puzzleImageAsset,
+            imageSource: _imageSource,
             borderRadius: _isSolved ? 0 : 8,
             showNumberBadge: !_isSolved,
           ),
@@ -532,12 +681,13 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
   }
 }
 
+/// Slices the master image dynamically into 3x3 tiles without manual 9-file cropping.
 class _CroppedPictureTile extends StatelessWidget {
   const _CroppedPictureTile({
     required this.tileId,
     required this.gridSize,
     required this.fullBoardSize,
-    required this.assetPath,
+    required this.imageSource,
     required this.borderRadius,
     required this.showNumberBadge,
   });
@@ -545,7 +695,7 @@ class _CroppedPictureTile extends StatelessWidget {
   final int tileId;
   final int gridSize;
   final double fullBoardSize;
-  final String assetPath;
+  final PuzzleImageSource imageSource;
   final double borderRadius;
   final bool showNumberBadge;
 
@@ -565,17 +715,7 @@ class _CroppedPictureTile extends StatelessWidget {
             top: -homeRow * cellSpan,
             width: fullBoardSize,
             height: fullBoardSize,
-            child: Image.asset(
-              assetPath,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => ColoredBox(
-                color: Color.lerp(
-                  const Color(0xFF4A433B),
-                  const Color(0xFF8A7B68),
-                  tileId / 8.0,
-                )!,
-              ),
-            ),
+            child: _buildImage(imageSource, fullBoardSize),
           ),
           if (showNumberBadge)
             Positioned(
@@ -584,7 +724,7 @@ class _CroppedPictureTile extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.48),
+                  color: Colors.black.withValues(alpha: 0.58),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
@@ -598,6 +738,189 @@ class _CroppedPictureTile extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildImage(PuzzleImageSource source, double size) {
+    return switch (source) {
+      AssetPuzzleImageSource(:final assetPath) => Image.asset(
+          assetPath,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => Image.asset(
+            kFallbackPuzzleImageAsset,
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            errorBuilder: (_, _, _) => ColoredBox(
+              color: Color.lerp(
+                const Color(0xFF4A433B),
+                const Color(0xFF8A7B68),
+                tileId / 8.0,
+              )!,
+            ),
+          ),
+        ),
+      MemoryPuzzleImageSource(:final bytes) => Image.memory(
+          bytes,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+        ),
+    };
+  }
+}
+
+class _ImagePickerSheet extends StatelessWidget {
+  const _ImagePickerSheet({
+    required this.onPickFromGallery,
+    required this.onSelectPreset,
+    required this.onResetDefault,
+  });
+
+  final VoidCallback onPickFromGallery;
+  final ValueChanged<PuzzlePresetImage> onSelectPreset;
+  final VoidCallback onResetDefault;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          padding: EdgeInsets.fromLTRB(
+            22,
+            16,
+            22,
+            MediaQuery.paddingOf(context).bottom + 20,
+          ),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1D1B).withValues(alpha: 0.94),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            border: Border(
+              top: BorderSide(color: Colors.white.withValues(alpha: 0.20)),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 4.5,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.32),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const TrText(
+                    'Select Test Puzzle Image',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFFF7F5F0),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Color(0xFFF7F5F0)),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFF4F1EB),
+                  foregroundColor: const Color(0xFF22201E),
+                  minimumSize: const Size.fromHeight(48),
+                ),
+                onPressed: onPickFromGallery,
+                icon: const Icon(Icons.photo_library_outlined, size: 19),
+                label: const TrText('Pick Image from Device Gallery'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFF4F1EB),
+                  side: BorderSide(color: Colors.white.withValues(alpha: 0.24)),
+                  minimumSize: const Size.fromHeight(44),
+                ),
+                onPressed: onResetDefault,
+                icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                label: const TrText('Reset to Master Asset (puzzle_master.png)'),
+              ),
+              const SizedBox(height: 14),
+              const TrText(
+                'Or Choose from Preset Station Photos:',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFFD9CBB8),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 110,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: kPuzzlePresetImages.length,
+                  itemBuilder: (context, index) {
+                    final preset = kPuzzlePresetImages[index];
+                    return GestureDetector(
+                      onTap: () => onSelectPreset(preset),
+                      child: Container(
+                        width: 100,
+                        margin: const EdgeInsets.only(right: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2B2824),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(
+                              child: ClipRRect(
+                                borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                                child: Image.asset(
+                                  preset.assetPath,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, _, _) => const ColoredBox(color: Color(0xFF4A433B)),
+                                ),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.all(6),
+                              child: TrText(
+                                preset.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 10.5,
+                                  color: Color(0xFFF7F5F0),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -649,8 +972,8 @@ class _TopGlassButton extends StatelessWidget {
             child: InkWell(
               onTap: onTap,
               child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                child: Icon(icon, color: const Color(0xFFF7F5F0), size: 22),
+                constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+                child: Icon(icon, color: const Color(0xFFF7F5F0), size: 20),
               ),
             ),
           ),
@@ -683,19 +1006,19 @@ class _BottomControlChip extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           onTap: onTap,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 44, minWidth: 48),
+            constraints: const BoxConstraints(minHeight: 40, minWidth: 44),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(icon, size: 16, color: const Color(0xFFD9CBB8)),
+                  Icon(icon, size: 15, color: const Color(0xFFD9CBB8)),
                   const SizedBox(width: 6),
                   TrText(
                     label,
                     style: const TextStyle(
                       color: Color(0xFFF7F5F0),
-                      fontSize: 12.5,
+                      fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
