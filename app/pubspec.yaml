@@ -34,8 +34,10 @@ flutter:
     - assets/ar_targets.json
     - assets/stations_data.json
     - assets/scan_triggers.json
+    - assets/place_targets.json
     - assets/i18n/en.json
     - assets/portraits/
     - assets/ar_panels/
     - assets/computers/
     - assets/stations/
+    - assets/place_targets/

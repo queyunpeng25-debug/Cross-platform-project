@@ -5,6 +5,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -16,6 +17,8 @@ import '../../content.dart';
 import '../../core/controllers.dart';
 import '../../core/models.dart';
 import '../../core/translation_service.dart';
+import 'live_frame_grabber.dart';
+import 'place_image_recognizer.dart';
 
 /// Notifier bridged from the parent `FrostedSplitDock` center Shutter button
 /// so pressing the dock shutter triggers a deterministic capture/recognition
@@ -57,6 +60,15 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
   static const Color _goldSparkle = Color(0xFFF3C64F);
 
   late final AnimationController _floatController;
+  final GlobalKey _cameraPreviewBoundaryKey = GlobalKey();
+  final ImagePicker _imagePicker = ImagePicker();
+
+  PlaceImageRecognizer? _placeRecognizer;
+  Timer? _liveVisionTimer;
+  bool _liveVisionBusy = false;
+  String? _pendingVisualStationId;
+  DateTime _pendingVisualAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastVisualMatchedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   int _shutterRequestId = 0;
   bool _shutterBusy = false;
@@ -70,7 +82,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
   DateTime _lastUnrecognizedQrAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   String _statusMessage =
-      'Point at a station QR code, or press Shutter to recognise a building sign.';
+      'Point at a QR code, door logo, or building sign — or press Shutter to scan.';
 
   bool get _supportsNativeArPortraits =>
       !kIsWeb &&
@@ -93,6 +105,25 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
     )..repeat();
 
     widget.shutterController.addListener(_onShutterTriggered);
+    unawaited(_ensurePlaceRecognizer());
+    _liveVisionTimer = Timer.periodic(
+      const Duration(milliseconds: 1500),
+      (_) => unawaited(_probeLiveVisualPlace()),
+    );
+  }
+
+  Future<PlaceImageRecognizer?> _ensurePlaceRecognizer() async {
+    final existing = _placeRecognizer;
+    if (existing != null) return existing;
+    try {
+      final loaded = await PlaceImageRecognizer.loadDefault();
+      if (mounted) {
+        _placeRecognizer = loaded;
+      }
+      return loaded;
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -115,6 +146,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
 
   @override
   void dispose() {
+    _liveVisionTimer?.cancel();
     widget.shutterController.removeListener(_onShutterTriggered);
     _floatController.dispose();
     super.dispose();
@@ -303,26 +335,181 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
     }
   }
 
+  Future<void> _probeLiveVisualPlace() async {
+    if (!mounted ||
+        _isCatchMode ||
+        _shutterBusy ||
+        _liveVisionBusy ||
+        _cameraSuspendedForNativeAr) {
+      return;
+    }
+    final now = DateTime.now();
+    if (now.difference(_lastVisualMatchedAt) < const Duration(seconds: 3) ||
+        now.difference(_lastQrProcessedAt) < const Duration(seconds: 3)) {
+      return;
+    }
+    final recognizer = _placeRecognizer;
+    if (recognizer == null) return;
+
+    _liveVisionBusy = true;
+    try {
+      final frame = await grabLiveCameraFrame(
+        _cameraPreviewBoundaryKey,
+        maxDimension: 340,
+      );
+      if (!mounted || frame == null || _isCatchMode || _shutterBusy) return;
+
+      final match = recognizer.recognizeRgba(frame);
+      if (!mounted || match == null) {
+        if (now.difference(_pendingVisualAt) > const Duration(seconds: 3)) {
+          _pendingVisualStationId = null;
+        }
+        return;
+      }
+
+      final confirmed = match.isHighConfidence ||
+          (_pendingVisualStationId == match.stationId &&
+              now.difference(_pendingVisualAt) <=
+                  const Duration(milliseconds: 3200));
+
+      if (confirmed) {
+        _pendingVisualStationId = null;
+        _lastVisualMatchedAt = DateTime.now();
+        await _applyVisualPlaceMatch(match);
+      } else {
+        _pendingVisualStationId = match.stationId;
+        _pendingVisualAt = now;
+        setState(() {
+          _statusMessage =
+              'Spotted ${match.label} — hold steady or press Shutter to open.';
+        });
+      }
+    } finally {
+      _liveVisionBusy = false;
+    }
+  }
+
+  Future<void> _applyVisualPlaceMatch(PlaceVisualMatch match) async {
+    if (!mounted) return;
+    unawaited(HapticFeedback.selectionClick());
+    setState(() {
+      _statusMessage = 'Recognised ${match.label}! Opening guide...';
+    });
+
+    final externalUrl = match.externalUrl;
+    if (externalUrl != null && externalUrl.isNotEmpty) {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger?.hideCurrentSnackBar();
+      messenger?.showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+          content: Text('Recognised ${match.label}'),
+          action: SnackBarAction(
+            label: 'Subway Menu',
+            onPressed: () {
+              final uri = Uri.tryParse(externalUrl);
+              if (uri != null) {
+                unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+              }
+            },
+          ),
+        ),
+      );
+    }
+
+    widget.onStationMatched(match.stationId);
+  }
+
+  Future<bool> _scanPhotoFromPicker() async {
+    try {
+      final picked = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1280,
+        maxHeight: 1280,
+      );
+      if (picked == null || !mounted) return false;
+
+      setState(() {
+        _statusMessage = 'Analysing selected photo...';
+      });
+
+      final bytes = await picked.readAsBytes();
+      final recognizer = await _ensurePlaceRecognizer();
+      if (!mounted || recognizer == null) return false;
+
+      final match = await recognizer.recognizeEncodedBytes(bytes);
+      if (!mounted) return false;
+
+      if (match != null) {
+        _lastVisualMatchedAt = DateTime.now();
+        await _applyVisualPlaceMatch(match);
+        return true;
+      }
+
+      setState(() {
+        _statusMessage =
+            'No registered place matched that photo. Frame the sign/logo clearly and try again.';
+      });
+      return false;
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Unable to read photo. Please try again.';
+        });
+      }
+      return false;
+    }
+  }
+
   Future<void> _handleVisualSignShutter(int token) async {
     if (_shutterBusy || token != _shutterRequestId) return;
     _shutterBusy = true;
     try {
       setState(() {
+        _statusMessage = 'Analysing live camera frame...';
+      });
+
+      final recognizer = await _ensurePlaceRecognizer();
+      if (!mounted || token != _shutterRequestId) return;
+
+      if (recognizer != null) {
+        final liveFrame = await grabLiveCameraFrame(
+          _cameraPreviewBoundaryKey,
+          maxDimension: 400,
+        );
+        if (!mounted || token != _shutterRequestId) return;
+
+        if (liveFrame != null) {
+          final match = recognizer.recognizeRgba(liveFrame);
+          if (match != null) {
+            _lastVisualMatchedAt = DateTime.now();
+            await _applyVisualPlaceMatch(match);
+            return;
+          }
+        }
+      }
+
+      setState(() {
         _statusMessage =
-            'Frame captured — select or type the visible sign or logo to confirm.';
+            'Move closer to the door/logo and press Shutter — or pick a photo / sign below.';
       });
 
       final sample = await _showVisualRecognitionSheet(
-        title: 'Visual & Sign Recognition',
+        title: 'Place & Sign Recognition',
         subtitle:
-            'Confirm the building sign, guild logo, portrait, or Subway emblem visible in your frame:',
+            'Move closer to the Greenhouse, Guild logo, Wing A door, SCI / Maarintie 8 door, or Subway sign — or scan from a photo / confirm below:',
       );
 
       if (!mounted || token != _shutterRequestId) return;
+      if (sample == _kPickPhotoSentinel) {
+        await _scanPhotoFromPicker();
+        return;
+      }
       if (sample == null || sample.trim().isEmpty) {
         setState(() {
           _statusMessage =
-              'Point at a station QR code, or press Shutter to recognise a building sign.';
+              'Point at a QR code, door logo, or building sign — or press Shutter to scan.';
         });
         return;
       }
@@ -332,6 +519,8 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
       _shutterBusy = false;
     }
   }
+
+  static const String _kPickPhotoSentinel = '__pick_photo_for_visual_scan__';
 
   Future<void> _dispatchVisualSample(String sample) async {
     final catalog = _catalogOrNull();
@@ -353,6 +542,9 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
           _statusMessage = 'Floating puzzle piece collected!';
         });
       case ScanExternalLink(:final title, :final url):
+        if (url.toLowerCase().contains('subway')) {
+          progress?.unlockAndSetCurrentStation('canteen');
+        }
         if (!mounted) return;
         setState(() {
           _statusMessage = 'Opening $title...';
@@ -360,6 +552,9 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
         final uri = Uri.tryParse(url);
         if (uri != null) {
           await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
+        if (mounted && url.toLowerCase().contains('subway')) {
+          widget.onStationMatched('canteen');
         }
       case ScanUnrecognized(:final hint):
         if (!mounted) return;
@@ -470,24 +665,29 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
     final catalog = _catalogOrNull();
     final presets = <_VisualPreset>[
       const _VisualPreset(
-        label: 'Learning Hub (Greenhouse)',
+        label: 'Learning Hub Greenhouse',
         sample: 'Learning Hub',
         icon: Icons.eco_outlined,
       ),
       const _VisualPreset(
-        label: 'Maarintie 8 (2F Skybridge to TUAS)',
+        label: '1F End Door to TUAS (SCI / Maarintie 8)',
         sample: 'Maarintie 8',
-        icon: Icons.place_outlined,
+        icon: Icons.sensor_door_outlined,
       ),
       const _VisualPreset(
-        label: 'Guild Logos (Tietokilta / Athene / Data Guild)',
+        label: 'Guild Logos (TiK / Athene / DG · DATABASE)',
         sample: 'Tietokilta',
         icon: Icons.groups_2_outlined,
       ),
       const _VisualPreset(
-        label: 'PALLASKATU / DATABASE Door Sign',
-        sample: 'DATABASE',
-        icon: Icons.door_front_door_outlined,
+        label: "Locked Wing 'A' Door / Plaque",
+        sample: 'Wing A',
+        icon: Icons.lock_outline_rounded,
+      ),
+      const _VisualPreset(
+        label: 'Subway Campus Sign',
+        sample: 'Subway',
+        icon: Icons.lunch_dining_outlined,
       ),
       const _VisualPreset(
         label: 'CS Pioneer Portraits (Kaisa Nyberg)',
@@ -498,16 +698,6 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
         label: 'Evolution of Computers Display',
         sample: 'Evolution of Computers',
         icon: Icons.computer_outlined,
-      ),
-      const _VisualPreset(
-        label: 'TUAS Skyway Bridge',
-        sample: 'TUAS',
-        icon: Icons.compare_arrows_rounded,
-      ),
-      const _VisualPreset(
-        label: 'Subway Campus Logo',
-        sample: 'Subway',
-        icon: Icons.lunch_dining_outlined,
       ),
     ];
 
@@ -567,10 +757,14 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
       final chosenSample = await _showVisualRecognitionSheet(
         title: 'What Can I Scan?',
         subtitle:
-            'Scan physical markers around Konemiehentie 2 / Maarintie 8, or tap/type a visible sign below if camera access is unavailable:',
+            'Scan physical QR codes or point the camera at registered building places (Greenhouse, Guild logos, Wing A door, 1F SCI/TUAS door, Subway):',
         includeScannerGuide: true,
       );
       if (!mounted || chosenSample == null || chosenSample.trim().isEmpty) {
+        return;
+      }
+      if (chosenSample == _kPickPhotoSentinel) {
+        await _scanPhotoFromPicker();
         return;
       }
       await _dispatchVisualSample(chosenSample);
@@ -592,11 +786,14 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
         children: [
           // 1. Live Camera Feed (MobileScanner with JIT permission & error fallback)
           if (!_cameraSuspendedForNativeAr)
-            MobileScanner(
-              onDetect: _onBarcodeDetected,
-              errorBuilder: (context, error) => _CameraFallbackPanel(
-                errorCodeName: error.errorCode.name,
-                onOpenVisualSimulation: _openInfoAndFallbackSheet,
+            RepaintBoundary(
+              key: _cameraPreviewBoundaryKey,
+              child: MobileScanner(
+                onDetect: _onBarcodeDetected,
+                errorBuilder: (context, error) => _CameraFallbackPanel(
+                  errorCodeName: error.errorCode.name,
+                  onOpenVisualSimulation: _openInfoAndFallbackSheet,
+                ),
               ),
             )
           else
@@ -1318,13 +1515,13 @@ class _VisualRecognitionBottomSheetState
                         icon: Icons.qr_code_2_rounded,
                         title: 'Station QR Codes (Automatic)',
                         detail:
-                            'Lobby & TUAS Bridge QR markers unlock immediately when framed.',
+                            'Lobby & 3rd-Floor Loft QR markers unlock immediately when framed.',
                       ),
                       const _ScanCapabilityRow(
-                        icon: Icons.signpost_outlined,
-                        title: 'Building Signs & Guild Logos (Shutter)',
+                        icon: Icons.center_focus_strong_rounded,
+                        title: 'Live Place & Logo Recognition (Auto + Shutter)',
                         detail:
-                            'Greenhouse "Learning Hub" sign, Maarintie 8 plaque, Guild room logos (Tietokilta, PALLASKATU, DATABASE), and Subway.',
+                            'Recognises Greenhouse, Guild logos (TiK, Athene, DG · DATABASE), Locked Wing A door/plaque, 1F SCI / Maarintie 8 door (or mailbox), and Subway.',
                       ),
                       const _ScanCapabilityRow(
                         icon: Icons.view_in_ar_rounded,
@@ -1333,7 +1530,23 @@ class _VisualRecognitionBottomSheetState
                             'Use 3D AR Portraits on Android/iOS for anchored GLB biography panels, or toggle Floating AR Piece to catch station puzzle pieces.',
                       ),
                     ],
-                    const SizedBox(height: 18),
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_UnifiedScanScreenState._kPickPhotoSentinel),
+                      icon: const Icon(Icons.photo_library_outlined, size: 19),
+                      label: const TrText(
+                        'Recognise Place from Photo / Camera Roll',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
                     TrText(
                       'Type Visible Sign Text (Fallback / Demo)',
                       style: theme.textTheme.titleSmall?.copyWith(

@@ -1,0 +1,97 @@
+{
+  "targets": [
+    {
+      "id": "greenhouse_facade",
+      "stationId": "greenhouse",
+      "label": "Learning Hub Greenhouse",
+      "asset": "assets/place_targets/greenhouse_facade.jpg",
+      "ignoreRects": [
+        [0.27, 0.43, 0.53, 0.66]
+      ]
+    },
+    {
+      "id": "greenhouse_sign",
+      "stationId": "greenhouse",
+      "label": "Learning Hub Greenhouse Sign",
+      "asset": "assets/place_targets/greenhouse_sign.jpg"
+    },
+    {
+      "id": "guild_tik",
+      "stationId": "guilds",
+      "label": "Tietokilta (TiK) Guild Logo",
+      "asset": "assets/place_targets/guild_tik.jpg"
+    },
+    {
+      "id": "guild_athene",
+      "stationId": "guilds",
+      "label": "Athene Guild Emblem",
+      "asset": "assets/place_targets/guild_athene.jpg"
+    },
+    {
+      "id": "guild_dg",
+      "stationId": "guilds",
+      "label": "Data Guild (DG · DATABASE) Logo",
+      "asset": "assets/place_targets/guild_dg.jpg"
+    },
+    {
+      "id": "locked_door_a",
+      "stationId": "locked_corridors",
+      "label": "Locked Wing 'A' Door",
+      "asset": "assets/place_targets/locked_door_a.jpg",
+      "ignoreRects": [
+        [0.38, 0.24, 0.69, 0.73]
+      ]
+    },
+    {
+      "id": "locked_sign_a",
+      "stationId": "locked_corridors",
+      "label": "Locked Wing 'A' Plaque",
+      "asset": "assets/place_targets/locked_sign_a.jpg",
+      "isCompactEmblem": true
+    },
+    {
+      "id": "tuas_door_alcove",
+      "stationId": "tuas_bridge",
+      "label": "1F End Door toward TUAS (SCI / Maarintie 8)",
+      "asset": "assets/place_targets/tuas_door_alcove.jpg",
+      "ignoreRects": [
+        [0.50, 0.36, 0.62, 0.63]
+      ]
+    },
+    {
+      "id": "tuas_door_sci",
+      "stationId": "tuas_bridge",
+      "label": "SCI / Maarintie 8 Door",
+      "asset": "assets/place_targets/tuas_door_sci.jpg"
+    },
+    {
+      "id": "tuas_sci_badge",
+      "stationId": "tuas_bridge",
+      "label": "SCI / Maarintie 8 Sign",
+      "asset": "assets/place_targets/tuas_sci_badge.jpg",
+      "isCompactEmblem": true
+    },
+    {
+      "id": "tuas_postal_box",
+      "stationId": "tuas_bridge",
+      "label": "1F Corridor Postal Box (TUAS Shortcut)",
+      "asset": "assets/place_targets/tuas_postal_box.jpg",
+      "isCompactEmblem": true
+    },
+    {
+      "id": "subway_wall",
+      "stationId": "canteen",
+      "label": "Subway Campus Sign",
+      "asset": "assets/place_targets/subway_wall.jpg",
+      "externalUrl": "https://www.subway.fi/en/menu"
+    },
+    {
+      "id": "subway_logo",
+      "stationId": "canteen",
+      "label": "Subway Logo",
+      "asset": "assets/place_targets/subway_logo.jpg",
+      "externalUrl": "https://www.subway.fi/en/menu",
+      "isCompactEmblem": true
+    }
+  ]
+}
