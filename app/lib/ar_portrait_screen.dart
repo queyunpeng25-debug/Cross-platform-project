@@ -171,11 +171,12 @@ class _ArPortraitScreenState extends State<ArPortraitScreen>
       }
     });
     try {
+      setState(() => status = 'Starting AR camera…');
       // Assets use real metres on both platforms; disable upstream scale factors.
       await objectManager.onInitialize(
         iosScaleFactor: 1,
         androidScaleFactor: 1,
-      );
+      ).timeout(const Duration(seconds: 10));
       if (!valid(token)) return;
       await manager
           .onInitialize(
