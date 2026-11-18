@@ -6,8 +6,8 @@ import 'ar_tabletop_puzzle_screen.dart';
 import 'station_minigames.dart';
 
 /// Museum-styled implementation of [MinigameFeatureSlot] providing:
-/// 1. [launchFloatingPuzzleCatch] — opens the dedicated 10-20s station mini-challenge.
-/// 2. [launchGreenhouseActivity] — opens the Greenhouse 2x2 photo checklist activity.
+/// 1. [launchFloatingPuzzleCatch] — launches full-screen live camera AR mini-challenge.
+/// 2. [launchGreenhouseActivity] — launches full-screen live camera AR Greenhouse photo quest.
 /// 3. [buildFinalPuzzleScreen] — Tabletop AR 3x3 sliding-tile puzzle with dynamic master image slicing.
 class DefaultMinigameFeatureSlot implements MinigameFeatureSlot {
   const DefaultMinigameFeatureSlot({this.onOpenScannerCatch});
@@ -20,13 +20,12 @@ class DefaultMinigameFeatureSlot implements MinigameFeatureSlot {
     required StationSpec station,
     required TourProgressController progress,
   }) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => StationMinigameHostSheet(
-        station: station,
-        progress: progress,
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ArStationMinigameScreen(
+          station: station,
+          progress: progress,
+        ),
       ),
     );
   }
@@ -53,13 +52,12 @@ class DefaultMinigameFeatureSlot implements MinigameFeatureSlot {
           normalizedY: 0.52,
         );
 
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => StationMinigameHostSheet(
-        station: spec,
-        progress: progress,
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ArStationMinigameScreen(
+          station: spec,
+          progress: progress,
+        ),
       ),
     );
   }

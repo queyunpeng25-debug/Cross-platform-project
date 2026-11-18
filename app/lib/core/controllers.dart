@@ -203,6 +203,15 @@ class AppSettingsController extends ZenController {
   void setDemoUnlockAll(bool enabled) {
     demoUnlockAll.value = enabled;
     unawaited(prefs?.setBool(_keyDemoUnlock, enabled));
+    if (!enabled) {
+      final progress = Zen.findOrNull<TourProgressController>();
+      if (progress != null) {
+        // When demo mode is turned off, revert to lobby if the current station was not actually scanned
+        if (!progress.isStationUnlocked(progress.currentStationId.value, demoUnlockAll: false)) {
+          progress.currentStationId.value = 'lobby';
+        }
+      }
+    }
   }
 }
 
@@ -221,6 +230,7 @@ class TourProgressController extends ZenController {
 
   static const String _keyCurrent = 'cs_tour_current_station';
   static const String _keyVisited = 'cs_tour_visited_stations';
+  static const String _keyScanned = 'cs_tour_scanned_stations_v2';
   static const String _keyPuzzles = 'cs_tour_collected_puzzles';
 
   final StationCatalogRepository catalog;
@@ -228,15 +238,20 @@ class TourProgressController extends ZenController {
 
   late final currentStationId = obs<String>('lobby');
   late final visitedStationIds = obs<Set<String>>(<String>{'lobby'});
+  late final scannedStationIds = obs<Set<String>>(<String>{});
   late final collectedPuzzleIds = obs<Set<String>>(<String>{});
 
   void _hydrate() {
     final p = prefs;
     if (p == null) return;
 
-    final savedVisited = p.getStringList(_keyVisited);
-    if (savedVisited != null && savedVisited.isNotEmpty) {
-      visitedStationIds.value = <String>{'lobby', ...savedVisited};
+    final savedScanned = p.getStringList(_keyScanned);
+    if (savedScanned != null) {
+      scannedStationIds.value = savedScanned.toSet();
+      visitedStationIds.value = <String>{'lobby', ...savedScanned};
+    } else {
+      scannedStationIds.value = <String>{};
+      visitedStationIds.value = <String>{'lobby'};
     }
 
     final savedCurrent = p.getString(_keyCurrent);
@@ -258,7 +273,7 @@ class TourProgressController extends ZenController {
     if (currentStationId.value == stationId) {
       return StationVisitStatus.current;
     }
-    if (visitedStationIds.value.contains(stationId)) {
+    if (isStationUnlocked(stationId, demoUnlockAll: false)) {
       return StationVisitStatus.visited;
     }
     return StationVisitStatus.unvisited;
@@ -268,7 +283,7 @@ class TourProgressController extends ZenController {
     if (demoUnlockAll) return true;
     final spec = catalog.findById(stationId);
     if (spec != null && spec.unlockedByDefault) return true;
-    return visitedStationIds.value.contains(stationId);
+    return scannedStationIds.value.contains(stationId);
   }
 
   bool hasCollectedPiece(String stationId) =>
@@ -278,17 +293,22 @@ class TourProgressController extends ZenController {
   /// map QR updates the user's current building location).
   void unlockAndSetCurrentStation(String stationId) {
     if (catalog.findById(stationId) == null) return;
-    final nextVisited = <String>{...visitedStationIds.value, stationId};
+    final nextScanned = <String>{...scannedStationIds.value, stationId};
+    scannedStationIds.value = nextScanned;
+    final nextVisited = <String>{'lobby', ...nextScanned};
     visitedStationIds.value = nextVisited;
     currentStationId.value = stationId;
     unawaited(prefs?.setString(_keyCurrent, stationId));
+    unawaited(prefs?.setStringList(_keyScanned, nextScanned.toList()));
     unawaited(prefs?.setStringList(_keyVisited, nextVisited.toList()));
   }
 
-  /// Updates active position when revisiting an already-unlocked station.
+  /// Updates active position when revisiting an already-unlocked station or previewing in demo mode.
+  /// Does NOT mark unvisited stations as scanned or permanently unlocked.
   void setCurrentIfUnlocked(String stationId, {bool demoUnlockAll = false}) {
     if (!isStationUnlocked(stationId, demoUnlockAll: demoUnlockAll)) return;
-    unlockAndSetCurrentStation(stationId);
+    currentStationId.value = stationId;
+    unawaited(prefs?.setString(_keyCurrent, stationId));
   }
 
   /// Marks a station's floating AR puzzle piece as caught (`🧩`).
@@ -321,10 +341,12 @@ class TourProgressController extends ZenController {
 
   Future<void> resetTourProgress() async {
     visitedStationIds.value = <String>{'lobby'};
+    scannedStationIds.value = <String>{};
     currentStationId.value = 'lobby';
     collectedPuzzleIds.value = <String>{};
     await prefs?.remove(_keyCurrent);
     await prefs?.remove(_keyVisited);
+    await prefs?.remove(_keyScanned);
     await prefs?.remove(_keyPuzzles);
   }
 }

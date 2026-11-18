@@ -124,12 +124,35 @@ class SideMenuPanel extends StatelessWidget {
                           station.id,
                           demoUnlockAll: demoUnlock,
                         ),
+                        isDemoMode: demoUnlock,
                         hasPiece: progress.hasCollectedPiece(station.id),
                         isDark: isDark,
-                        onTapUnlocked: () => _invokeMenuAction(
-                          context,
-                          () => onSelectStation(station.id),
-                        ),
+                        onTapUnlocked: () {
+                          if (demoUnlock) {
+                            _invokeMenuAction(
+                              context,
+                              () => onSelectStation(station.id),
+                            );
+                          } else {
+                            final isCurrent = progress.statusFor(station.id) ==
+                                StationVisitStatus.current;
+                            if (isCurrent) {
+                              _invokeMenuAction(context, () {});
+                            } else {
+                              ScaffoldMessenger.of(context)
+                                ..hideCurrentSnackBar()
+                                ..showSnackBar(
+                                  const SnackBar(
+                                    behavior: SnackBarBehavior.floating,
+                                    duration: Duration(seconds: 2),
+                                    content: TrText(
+                                      'Scan the dedicated QR code on-site to switch to this area.',
+                                    ),
+                                  ),
+                                );
+                            }
+                          }
+                        },
                       ),
                       const SizedBox(height: 4),
                     ],
@@ -247,6 +270,7 @@ class _SoberStationRow extends StatelessWidget {
     required this.hasPiece,
     required this.isDark,
     required this.onTapUnlocked,
+    this.isDemoMode = false,
   });
 
   final StationSpec station;
@@ -255,6 +279,7 @@ class _SoberStationRow extends StatelessWidget {
   final bool hasPiece;
   final bool isDark;
   final VoidCallback onTapUnlocked;
+  final bool isDemoMode;
 
   @override
   Widget build(BuildContext context) {
@@ -359,7 +384,7 @@ class _SoberStationRow extends StatelessWidget {
     }
 
     return Semantics(
-      button: true,
+      button: isDemoMode || isCurrent,
       selected: isCurrent,
       label: '${station.title}, ${station.floorLabel}',
       child: Material(

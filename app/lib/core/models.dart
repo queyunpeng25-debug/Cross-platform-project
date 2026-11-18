@@ -394,12 +394,13 @@ final class TeamMemberProfile {
       githubUrl: 'https://github.com/queyunpeng25-debug',
     ),
     TeamMemberProfile(
-      name: 'Nico',
-      initials: 'NC',
+      name: 'Niccolò',
+      initials: 'NS',
       roleTitle: 'Floating AR Puzzle Hunt & Station Minigames',
       contributionSummary:
           'Creates the building-wide floating AR puzzle piece capture experience, Greenhouse interactive activity, and the final puzzle assembly game.',
       accentColor: Color(0xFF8A7B68),
+      githubUrl: 'https://github.com/NiccoloSobrero',
     ),
   ];
 }

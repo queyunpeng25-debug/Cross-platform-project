@@ -3,18 +3,32 @@ import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:sensors_plus/sensors_plus.dart';
 import 'package:zenify/zenify.dart';
 
 import '../../core/controllers.dart';
 import '../../core/models.dart';
 import '../../core/translation_service.dart';
 import '../../ui/puzzle_icon.dart';
+import 'puzzle_config.dart';
+import 'spatial_minigame_engine.dart';
 
-/// Modal host sheet presenting the station-specific mini-challenge (10-20 seconds).
-/// On completion, calls [TourProgressController.markPuzzlePieceCollected].
-class StationMinigameHostSheet extends StatefulWidget {
-  const StationMinigameHostSheet({
+/// Full-Screen AR Spatial Puzzle Hunt Screen.
+///
+/// Combines a reliable live camera feed with hardware sensor tracking
+/// (gyroscope + accelerometer via `sensors_plus`) running on a 60 FPS Ticker loop.
+///
+/// The 3D puzzle piece is world-locked in the physical room at its designated
+/// azimuth, elevation, and distance. As the visitor turns and tilts the phone,
+/// the piece glides in and out of the camera view smoothly.
+///
+/// The piece can ONLY be collected when properly framed inside the center reticle box
+/// and captured with the Shutter button.
+class ArStationMinigameScreen extends StatefulWidget {
+  const ArStationMinigameScreen({
     super.key,
     required this.station,
     required this.progress,
@@ -24,1522 +38,1465 @@ class StationMinigameHostSheet extends StatefulWidget {
   final TourProgressController progress;
 
   @override
-  State<StationMinigameHostSheet> createState() => _StationMinigameHostSheetState();
+  State<ArStationMinigameScreen> createState() => _ArStationMinigameScreenState();
 }
 
-class _StationMinigameHostSheetState extends State<StationMinigameHostSheet> {
-  bool _completed = false;
+class _ArStationMinigameScreenState extends State<ArStationMinigameScreen>
+    with SingleTickerProviderStateMixin {
+  late final StationPuzzleSpatialOffset _offset;
 
-  void _onChallengeCompleted() {
-    if (_completed) return;
-    HapticFeedback.heavyImpact();
-    setState(() {
-      _completed = true;
-    });
-    widget.progress.markPuzzlePieceCollected(widget.station.id);
+  // Live filtered camera orientation angles (degrees)
+  double _cameraYaw = 0.0; // 0° to 360°
+  double _cameraPitch = 0.0; // -90° to +90°
+
+  // Sensor targets for smooth 60 FPS interpolation
+  double _targetPitch = 0.0;
+  double _pendingYawDelta = 0.0;
+  DateTime? _lastGyroTime;
+  double _accelX = 0.0;
+  double _accelY = -9.8;
+  double _accelZ = 0.0;
+  bool _hasSensorsActive = false;
+
+  // Manual pan offset (used for desktop/simulators without physical sensors)
+  double _manualPanYaw = 0.0;
+  double _manualPanPitch = 0.0;
+
+  // Sensor subscriptions & 60 FPS Ticker
+  StreamSubscription<GyroscopeEvent>? _gyroSubscription;
+  StreamSubscription<AccelerometerEvent>? _accelSubscription;
+  late final Ticker _ticker;
+
+  // Camera controller
+  MobileScannerController? _cameraController;
+  bool _cameraPermissionGranted = true;
+
+  // UI & Capture state
+  bool _isCollected = false;
+  bool _isCapturing = false;
+  bool _showShutterFlash = false;
+  bool _showNotFramedWarning = false;
+  Timer? _warningTimer;
+  final bool _showSafetyPreflight = true;
+  bool _hasAcceptedPreflight = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final baseOffset = getStationPuzzleOffset(widget.station.id);
+    if (widget.station.id == 'lobby') {
+      // Tutorial station: placed straight ahead at eye level with slight natural float
+      final rng = math.Random();
+      final azJitter = (rng.nextDouble() * 4.0) - 2.0;
+      final elJitter = (rng.nextDouble() * 4.0) - 2.0;
+      _offset = baseOffset.copyWith(
+        azimuth: (baseOffset.azimuth + azJitter).clamp(-6.0, 6.0),
+        elevation: (baseOffset.elevation + elJitter).clamp(-4.0, 4.0),
+      );
+    } else {
+      // Exploration stations: dynamically randomize the position across the quadrant
+      // so it is NOT visible on startup and requires the visitor to look around.
+      final rng = math.Random();
+      final azJitter = (rng.nextDouble() * 40.0) - 20.0; // ±20°
+      final elJitter = (rng.nextDouble() * 16.0) - 8.0; // ±8°
+      final distJitter = (rng.nextDouble() * 0.6) - 0.3; // ±0.3m
+
+      var randAzimuth = baseOffset.azimuth + azJitter;
+      // Guarantee that the piece is outside the initial front camera view (|azimuth| >= 45° or |elevation| >= 35°)
+      if (randAzimuth.abs() < 45.0 && (baseOffset.elevation + elJitter).abs() < 35.0) {
+        randAzimuth = randAzimuth >= 0
+            ? 55.0 + rng.nextDouble() * 20.0
+            : -55.0 - rng.nextDouble() * 20.0;
+      }
+      if (randAzimuth > 180.0) randAzimuth -= 360.0;
+      if (randAzimuth < -180.0) randAzimuth += 360.0;
+
+      final randElevation = (baseOffset.elevation + elJitter).clamp(-45.0, 58.0);
+      final randDistance = (baseOffset.distance + distJitter).clamp(1.5, 3.8);
+
+      _offset = baseOffset.copyWith(
+        azimuth: randAzimuth,
+        elevation: randElevation,
+        distance: double.parse(randDistance.toStringAsFixed(1)),
+      );
+    }
+
+    _isCollected = widget.progress.hasCollectedPiece(widget.station.id);
+
+    // Camera always begins at user's forward heading (0°) so non-lobby pieces
+    // are not immediately in front and the user must physically look around.
+    _cameraYaw = 0.0;
+    _cameraPitch = 0.0;
+    _targetPitch = 0.0;
+
+    _initCamera();
+    _initHardwareSensors();
+
+    // 60 FPS Ticker for butter-smooth camera orientation interpolation
+    _ticker = createTicker((_) => _onFrameTick())..start();
+  }
+
+  Future<void> _initCamera() async {
+    final granted = await SpatialPreflightService.requestCameraPermission();
+    if (!mounted) return;
+
+    if (!granted) {
+      setState(() {
+        _cameraPermissionGranted = false;
+      });
+      return;
+    }
+
+    try {
+      _cameraController = MobileScannerController(
+        autoStart: true,
+        detectionSpeed: DetectionSpeed.normal,
+      );
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
+
+  void _initHardwareSensors() {
+    // 1. Accelerometer: continuously measures gravity vector to compute pitch without gimbal lock
+    try {
+      _accelSubscription = accelerometerEventStream(
+        samplingPeriod: SensorInterval.gameInterval,
+      ).listen(
+        (event) {
+          _hasSensorsActive = true;
+          _accelX = event.x;
+          _accelY = event.y;
+          _accelZ = event.z;
+
+          final length = math.sqrt(
+            event.x * event.x + event.y * event.y + event.z * event.z,
+          );
+          if (length > 1.5) {
+            // When pointing UP towards ceiling, event.z is negative -> -event.z > 0 -> pitch > 0°
+            // When pointing DOWN towards floor/desk, event.z is positive -> -event.z < 0 -> pitch < 0°
+            final pitchRatio = (-event.z / length).clamp(-1.0, 1.0);
+            _targetPitch = math.asin(pitchRatio) * (180.0 / math.pi);
+          }
+        },
+        onError: (_) {},
+      );
+    } catch (_) {}
+
+    // 2. Gyroscope: continuously measures rotational velocity around the vertical axis
+    try {
+      _lastGyroTime = DateTime.now();
+      _gyroSubscription = gyroscopeEventStream(
+        samplingPeriod: SensorInterval.gameInterval,
+      ).listen(
+        (event) {
+          _hasSensorsActive = true;
+          final now = DateTime.now();
+          final prev = _lastGyroTime ?? now;
+          _lastGyroTime = now;
+
+          final dt = now.difference(prev).inMicroseconds / 1000000.0;
+          if (dt <= 0.0 || dt > 0.2) return;
+
+          // Compute rotation around the phone's up vector
+          final gravLength = math.sqrt(
+            _accelX * _accelX + _accelY * _accelY + _accelZ * _accelZ,
+          );
+          double yawRate;
+          if (gravLength > 2.0) {
+            // True world vertical axis opposite to gravity
+            final upX = _accelX / gravLength;
+            final upY = _accelY / gravLength;
+            final upZ = _accelZ / gravLength;
+            yawRate = (event.x * upX + event.y * upY + event.z * upZ);
+          } else {
+            yawRate = event.y;
+          }
+
+          // Convert to delta degrees (turning right increases yaw heading)
+          final deltaDeg = -yawRate * (180.0 / math.pi) * dt;
+          _pendingYawDelta += deltaDeg;
+        },
+        onError: (_) {},
+      );
+    } catch (_) {}
+  }
+
+  void _onFrameTick() {
+    if (!mounted) return;
+
+    // Smoothly interpolate pitch towards target pitch
+    final newPitch = _cameraPitch * 0.78 + _targetPitch * 0.22;
+
+    // Accumulate pending yaw delta from gyroscope
+    var newYaw = (_cameraYaw + _pendingYawDelta) % 360.0;
+    if (newYaw < 0) newYaw += 360.0;
+    _pendingYawDelta = 0.0;
+
+    // Trigger frame update only when angle changed significantly
+    if ((newPitch - _cameraPitch).abs() > 0.04 ||
+        (newYaw - _cameraYaw).abs() > 0.04) {
+      setState(() {
+        _cameraPitch = newPitch;
+        _cameraYaw = newYaw;
+      });
+    }
   }
 
   @override
-  Widget build(BuildContext context) {
-    final settings = Zen.findOrNull<AppSettingsController>();
-    final isDemoMode = settings?.demoUnlockAll.value ?? false;
-    final alreadyCollected = widget.progress.hasCollectedPiece(widget.station.id);
+  void dispose() {
+    _ticker.dispose();
+    _warningTimer?.cancel();
+    _gyroSubscription?.cancel();
+    _accelSubscription?.cancel();
+    _cameraController?.dispose();
+    super.dispose();
+  }
 
-    return ClipRRect(
-      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-        child: Container(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height * 0.92,
-          ),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1E1D1B).withValues(alpha: 0.94),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-            border: Border(
-              top: BorderSide(color: Colors.white.withValues(alpha: 0.20)),
-            ),
-          ),
-          child: SafeArea(
-            top: false,
-            child: SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(
-                20,
-                16,
-                20,
-                MediaQuery.paddingOf(context).bottom + 20,
+  /// Recenter the heading so the current physical direction aligns with the piece.
+  void _recenterHeading() {
+    setState(() {
+      _cameraYaw = _offset.azimuth;
+      _cameraPitch = _offset.elevation;
+      _manualPanYaw = 0.0;
+      _manualPanPitch = 0.0;
+      _pendingYawDelta = 0.0;
+      _targetPitch = _offset.elevation;
+    });
+    HapticFeedback.selectionClick();
+  }
+
+  void _onShutterPressed({required bool isFramed}) {
+    if (_isCapturing || _isCollected) return;
+
+    if (!isFramed) {
+      // Must frame the piece inside the center box!
+      HapticFeedback.lightImpact();
+      _warningTimer?.cancel();
+      setState(() {
+        _showNotFramedWarning = true;
+      });
+      _warningTimer = Timer(const Duration(milliseconds: 2200), () {
+        if (mounted) setState(() => _showNotFramedWarning = false);
+      });
+      return;
+    }
+
+    // Success: piece is framed! Capture with camera flash & sound
+    setState(() {
+      _isCapturing = true;
+      _showShutterFlash = true;
+      _showNotFramedWarning = false;
+    });
+
+    HapticFeedback.heavyImpact();
+
+    // Shutter flash fades out quickly
+    Timer(const Duration(milliseconds: 180), () {
+      if (mounted) setState(() => _showShutterFlash = false);
+    });
+
+    // Mark collected in TourProgressController
+    widget.progress.markPuzzlePieceCollected(widget.station.id);
+
+    Timer(const Duration(milliseconds: 650), () {
+      if (!mounted) return;
+      setState(() {
+        _isCapturing = false;
+        _isCollected = true;
+      });
+      _showCollectionCelebrationSheet();
+    });
+  }
+
+  void _showCollectionCelebrationSheet() {
+    final totalCollected = widget.progress.collectedPuzzleCount;
+    final totalNeeded = widget.progress.totalPuzzleStations > 0
+        ? widget.progress.totalPuzzleStations
+        : 9;
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (sheetContext) => AsymmetricTranslucentSheet(
+        topLeftRadius: 48,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Glowing 3D celebratory piece
+              SizedBox(
+                height: 120,
+                child: Center(
+                  child: Spinning3DPuzzlePiece(
+                    tileIndex: _offset.tileIndex,
+                    stationTitle: widget.station.title,
+                    size: 96,
+                    isCollected: true,
+                  ),
+                ),
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Top Drag handle
-                  Center(
-                    child: Container(
-                      width: 44,
-                      height: 4.5,
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.32),
-                        borderRadius: BorderRadius.circular(4),
+              const SizedBox(height: 16),
+              const TrText(
+                'Puzzle Piece Captured!',
+                style: TextStyle(
+                  color: Color(0xFFF7F5F0),
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.4,
+                ),
+              ),
+              const SizedBox(height: 6),
+              TrText(
+                'Piece ${_offset.tileIndex + 1} of $totalNeeded · ${widget.station.title}',
+                style: const TextStyle(
+                  color: Color(0xFFD9CBB8),
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: const Color(0xFFD9CBB8).withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const PuzzlePieceIcon(
+                      collected: true,
+                      size: 16,
+                      activeColor: Color(0xFFD9CBB8),
+                    ),
+                    const SizedBox(width: 8),
+                    TrText(
+                      'Total Collected: $totalCollected / $totalNeeded',
+                      style: const TextStyle(
+                        color: Color(0xFFF7F5F0),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
-                  ),
-
-                  // Header Bar
-                  Row(
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.16),
-                          ),
-                        ),
-                        alignment: Alignment.center,
-                        child: PuzzlePieceIcon(
-                          collected: alreadyCollected || _completed,
-                          size: 22,
-                          activeColor: const Color(0xFFD9CBB8),
-                          inactiveColor: const Color(0xFFF7F5F0),
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            TrText(
-                              widget.station.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 16.5,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFFF7F5F0),
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            TrText(
-                              widget.station.floorLabel,
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                color: const Color(0xFFE8E2D8).withValues(alpha: 0.72),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close_rounded, color: Color(0xFFF7F5F0)),
-                        tooltip: 'Close',
-                        onPressed: () => Navigator.of(context).pop(),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  const Divider(color: Color(0xFF33302C), height: 1),
-                  const SizedBox(height: 16),
-
-                  // Success Celebration Card
-                  if (_completed)
-                    _VictoryCard(
-                      stationTitle: widget.station.title,
-                      collectedCount: widget.progress.collectedPuzzleCount,
-                      totalCount: widget.progress.totalPuzzleStations,
-                      onClose: () => Navigator.of(context).pop(),
-                    )
-                  else
-                    // Active Mini-challenge
-                    _buildMinigameForStation(widget.station.id),
-
-                  const SizedBox(height: 16),
-
-                  // Demo Quick-Solve Bar
-                  if (!_completed && isDemoMode)
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        style: TextButton.styleFrom(
-                          foregroundColor: const Color(0xFFD9CBB8),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        ),
-                        onPressed: _onChallengeCompleted,
-                        icon: const Icon(Icons.flash_on_rounded, size: 16),
-                        label: const TrText('Quick Solve (Demo Mode)'),
-                      ),
-                    ),
-                ],
+                  ],
+                ),
               ),
-            ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFD9CBB8),
+                    foregroundColor: const Color(0xFF141312),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    elevation: 0,
+                  ),
+                  onPressed: () {
+                    Navigator.of(sheetContext).pop();
+                    Navigator.of(context).pop();
+                  },
+                  child: const TrText(
+                    'Continue Tour',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _buildMinigameForStation(String id) {
-    return switch (id) {
-      'lobby' => LobbyOrbsMinigame(onSuccess: _onChallengeCompleted),
-      'computers' => ComputersTimelineMinigame(onSuccess: _onChallengeCompleted),
-      'greenhouse' => GreenhousePhotoMinigame(onSuccess: _onChallengeCompleted),
-      'portraits' => PortraitsQuizMinigame(onSuccess: _onChallengeCompleted),
-      'canteen' => CanteenSubwayMinigame(onSuccess: _onChallengeCompleted),
-      'guilds' => GuildsMatchMinigame(onSuccess: _onChallengeCompleted),
-      'study_places' => StudyPlacesRoomRushMinigame(onSuccess: _onChallengeCompleted),
-      'locked_corridors' => LockedCorridorsPcbMinigame(onSuccess: _onChallengeCompleted),
-      'tuas_bridge' => TuasBridgeCompassMinigame(onSuccess: _onChallengeCompleted),
-      _ => LobbyOrbsMinigame(onSuccess: _onChallengeCompleted),
-    };
-  }
-}
-
-class _VictoryCard extends StatelessWidget {
-  const _VictoryCard({
-    required this.stationTitle,
-    required this.collectedCount,
-    required this.totalCount,
-    required this.onClose,
-  });
-
-  final String stationTitle;
-  final int collectedCount;
-  final int totalCount;
-  final VoidCallback onClose;
-
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2B2824),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFD9CBB8).withValues(alpha: 0.40)),
+    final screenSize = MediaQuery.sizeOf(context);
+
+    // Combine hardware sensor look angles with any manual fine-tuning
+    final effectiveYaw = (_cameraYaw + _manualPanYaw) % 360.0;
+    final effectivePitch = (_cameraPitch + _manualPanPitch).clamp(-88.0, 88.0);
+
+    // Project world-locked 3D position onto current 2D screen viewport
+    final projection = SpatialProjectionEngine.project(
+      item: SpatialAnchorItem(
+        id: widget.station.id,
+        azimuth: _offset.azimuth,
+        elevation: _offset.elevation,
+        distance: _offset.distance,
+        title: _offset.title,
+        icon: Icons.extension_rounded,
       ),
-      child: Column(
+      cameraYaw: effectiveYaw,
+      cameraPitch: effectivePitch,
+      screenSize: screenSize,
+      pieceRadius: 75.0,
+    );
+
+    // Check if piece is framed inside the center box (box is 200x200 centered at W/2, H/2)
+    final centerX = screenSize.width * 0.5;
+    final centerY = screenSize.height * 0.5;
+    final deltaFromCenter = (projection.screenPosition - Offset(centerX, centerY));
+    final isFramedInCenter = projection.isInViewport &&
+        deltaFromCenter.dx.abs() <= 85.0 &&
+        deltaFromCenter.dy.abs() <= 85.0;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF141312),
+      body: Stack(
+        fit: StackFit.expand,
         children: [
-          const PuzzlePieceIcon(
-            collected: true,
-            size: 48,
-            activeColor: Color(0xFFD9CBB8),
+          // 1. Reliable Full-Screen Live Camera Feed
+          _buildCameraBackdrop(),
+
+          // 2. Gesture Detector for manual pan fine-tuning (e.g. desktop/simulator)
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanUpdate: (details) {
+              setState(() {
+                _manualPanYaw =
+                    (_manualPanYaw - details.delta.dx * 0.28) % 360.0;
+                if (_manualPanYaw < 0) _manualPanYaw += 360.0;
+                _manualPanPitch =
+                    (_manualPanPitch - details.delta.dy * 0.22)
+                        .clamp(-45.0, 45.0);
+              });
+            },
+            child: const SizedBox.expand(),
           ),
-          const SizedBox(height: 14),
-          const TrText(
-            'Challenge Completed!',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFFF7F5F0),
+
+          // 3. Center Framing Box / Viewfinder Reticle
+          _buildCenterFramingBox(
+            isFramed: isFramedInCenter,
+            showWarning: _showNotFramedWarning,
+          ),
+
+          // 4. World-Locked 3D Rotating Puzzle Piece (When in Viewport)
+          if (projection.isInViewport)
+            Positioned(
+              left: projection.screenPosition.dx - (65.0 * projection.scale),
+              top: projection.screenPosition.dy - (65.0 * projection.scale),
+              child: AnimatedScale(
+                scale: _isCapturing ? 1.5 : 1.0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOutBack,
+                child: Transform.scale(
+                  scale: projection.scale,
+                  child: Spinning3DPuzzlePiece(
+                    tileIndex: _offset.tileIndex,
+                    stationTitle: widget.station.title,
+                    size: 130.0,
+                    isCollected: _isCollected,
+                    onTap: () => _onShutterPressed(isFramed: isFramedInCenter),
+                  ),
+                ),
+              ),
+            ),
+
+          // 5. Off-Screen 3D Directional Radar Indicator (When out of Viewport)
+          if (!projection.isInViewport)
+            _buildOffScreenRadarIndicator(
+              screenSize: screenSize,
+              edgeAngle: projection.edgeAngle,
+              deltaYaw: projection.deltaYaw,
+              deltaPitch: projection.deltaPitch,
+            ),
+
+          // 6. Camera Shutter Flash Animation Overlay
+          if (_showShutterFlash)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 180),
+                  opacity: _showShutterFlash ? 0.85 : 0.0,
+                  child: const ColoredBox(color: Colors.white),
+                ),
+              ),
+            ),
+
+          // 7. Top Bar: Back, Station Pill, Recenter & Demo Catch
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _buildTopHeaderBar(),
+          ),
+
+          // 8. Warning Banner when pressing Shutter while piece is not centered
+          if (_showNotFramedWarning)
+            Positioned(
+              top: 100,
+              left: 20,
+              right: 20,
+              child: _buildNotFramedWarningBanner(),
+            ),
+
+          // 9. Bottom Action Bar with Spatial Anchor Hint & Shutter Capture Button
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: _buildBottomActionBar(
+              isFramed: isFramedInCenter,
             ),
           ),
-          const SizedBox(height: 6),
-          TrText(
-            'You unlocked the puzzle piece for $stationTitle ($collectedCount / $totalCount collected).',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 13.5,
-              color: Color(0xFFE8E2D8),
-              height: 1.4,
+
+          // 10. Safety Preflight Notice (On launch)
+          if (_showSafetyPreflight && !_hasAcceptedPreflight)
+            _buildSafetyPreflightOverlay(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCameraBackdrop() {
+    if (_cameraController != null && _cameraPermissionGranted) {
+      return MobileScanner(
+        controller: _cameraController!,
+        fit: BoxFit.cover,
+      );
+    }
+
+    // Studio simulated backdrop if camera permission denied or on desktop
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Color(0xFF1A1918), Color(0xFF0F0E0D)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CustomPaint(
+            painter: _CameraGridPainter(
+              yaw: _cameraYaw + _manualPanYaw,
+              pitch: _cameraPitch + _manualPanPitch,
             ),
           ),
-          const SizedBox(height: 18),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFF4F1EB),
-              foregroundColor: const Color(0xFF22201E),
-              minimumSize: const Size.fromHeight(48),
+          Center(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.touch_app_rounded,
+                    size: 16,
+                    color: const Color(0xFFD9CBB8).withValues(alpha: 0.8),
+                  ),
+                  const SizedBox(width: 8),
+                  const TrText(
+                    'Point camera around you or drag to explore',
+                    style: TextStyle(
+                      color: Color(0xFFD9CBB8),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
             ),
-            onPressed: onClose,
-            icon: const Icon(Icons.check_circle_outline_rounded, size: 19),
-            label: const TrText('Claim & Return to Station'),
           ),
         ],
       ),
     );
   }
-}
 
-// ============================================================================
-// 1. LOBBY MINIGAME: AR Orb Tap (George W. Hart suspended spheres)
-// ============================================================================
-class LobbyOrbsMinigame extends StatefulWidget {
-  const LobbyOrbsMinigame({super.key, required this.onSuccess});
-  final VoidCallback onSuccess;
+  Widget _buildCenterFramingBox({
+    required bool isFramed,
+    required bool showWarning,
+  }) {
+    final borderColor = isFramed
+        ? const Color(0xFF81C784)
+        : (showWarning
+            ? const Color(0xFFFFB74D)
+            : Colors.white.withValues(alpha: 0.35));
 
-  @override
-  State<LobbyOrbsMinigame> createState() => _LobbyOrbsMinigameState();
-}
-
-class _LobbyOrbsMinigameState extends State<LobbyOrbsMinigame>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _animController;
-  final Set<int> _tappedIndices = <int>{};
-
-  @override
-  void initState() {
-    super.initState();
-    _animController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 3),
-    )..repeat(reverse: true);
-  }
-
-  @override
-  void dispose() {
-    _animController.dispose();
-    super.dispose();
-  }
-
-  void _tapOrb(int index) {
-    if (_tappedIndices.contains(index)) return;
-    HapticFeedback.selectionClick();
-    setState(() {
-      _tappedIndices.add(index);
-    });
-    if (_tappedIndices.length >= 3) {
-      widget.onSuccess();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const TrText(
-          'Lobby Suspended Orbs',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFFF7F5F0),
+    return IgnorePointer(
+      child: Center(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: 200,
+          height: 200,
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: borderColor,
+              width: isFramed ? 2.5 : 1.5,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: isFramed
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF81C784).withValues(alpha: 0.35),
+                      blurRadius: 24,
+                      spreadRadius: 4,
+                    ),
+                  ]
+                : null,
           ),
-        ),
-        const SizedBox(height: 4),
-        const TrText(
-          'Look up at George W. Hart\'s twin geometric plywood spheres! Tap all 3 floating mathematical orbs to collect the lobby puzzle piece.',
-          style: TextStyle(fontSize: 13, color: Color(0xFFDDD7CD), height: 1.4),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.touch_app_outlined, size: 16, color: Color(0xFFD9CBB8)),
-            const SizedBox(width: 6),
-            TrText(
-              'Orbs collected: ${_tappedIndices.length} / 3',
-              style: const TextStyle(
-                color: Color(0xFFD9CBB8),
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
+          child: Stack(
+            children: [
+              // Center crosshair tick
+              Center(
+                child: Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: borderColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(18),
-          child: Container(
-            height: 230,
-            decoration: BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment.center,
-                radius: 1.1,
-                colors: [
-                  const Color(0xFF332E29),
-                  const Color(0xFF191817),
-                ],
-              ),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Stack(
-              children: [
-                // Floating Orb 0 (Left-Center)
-                AnimatedBuilder(
-                  animation: _animController,
-                  builder: (context, _) {
-                    final t = _animController.value;
-                    final dy = math.sin(t * math.pi * 2) * 12.0;
-                    return Positioned(
-                      left: 36,
-                      top: 48 + dy,
-                      child: _buildOrb(0, size: 68),
-                    );
-                  },
-                ),
-                // Floating Orb 1 (Center-Top)
-                AnimatedBuilder(
-                  animation: _animController,
-                  builder: (context, _) {
-                    final t = _animController.value;
-                    final dy = math.cos(t * math.pi * 2) * 14.0;
-                    return Positioned(
-                      left: 140,
-                      top: 24 + dy,
-                      child: _buildOrb(1, size: 76),
-                    );
-                  },
-                ),
-                // Floating Orb 2 (Right-Bottom)
-                AnimatedBuilder(
-                  animation: _animController,
-                  builder: (context, _) {
-                    final t = _animController.value;
-                    final dy = math.sin((t + 0.5) * math.pi * 2) * 10.0;
-                    return Positioned(
-                      right: 36,
-                      top: 76 + dy,
-                      child: _buildOrb(2, size: 72),
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 
-  Widget _buildOrb(int index, {required double size}) {
-    final tapped = _tappedIndices.contains(index);
-
-    return GestureDetector(
-      onTap: () => _tapOrb(index),
-      child: AnimatedScale(
-        scale: tapped ? 0.88 : 1.0,
-        duration: const Duration(milliseconds: 220),
-        child: AnimatedOpacity(
-          opacity: tapped ? 0.38 : 1.0,
-          duration: const Duration(milliseconds: 220),
-          child: Container(
-            width: size,
-            height: size,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              boxShadow: tapped
-                  ? []
-                  : [
-                      BoxShadow(
-                        color: const Color(0xFFD9CBB8).withValues(alpha: 0.45),
-                        blurRadius: 20,
-                        spreadRadius: 3,
+              // Lock-On Status Banner above reticle
+              Positioned(
+                top: 8,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isFramed
+                          ? const Color(0xFF81C784).withValues(alpha: 0.25)
+                          : Colors.black.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: isFramed
+                            ? const Color(0xFF81C784)
+                            : Colors.white.withValues(alpha: 0.20),
                       ),
-                    ],
-              gradient: RadialGradient(
-                colors: tapped
-                    ? [
-                        const Color(0xFF5D7A68),
-                        const Color(0xFF26332A),
-                      ]
-                    : [
-                        const Color(0xFFF7EBD9),
-                        const Color(0xFFD9CBB8),
-                        const Color(0xFF8A7B68),
-                      ],
+                    ),
+                    child: TrText(
+                      isFramed
+                          ? 'TARGET FRAMED · SNAP PHOTO!'
+                          : 'FRAME PIECE IN CENTER',
+                      style: TextStyle(
+                        color: isFramed
+                            ? const Color(0xFF81C784)
+                            : const Color(0xFFF7F5F0).withValues(alpha: 0.8),
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // Inner geometric lattice rings
-                Container(
-                  width: size * 0.72,
-                  height: size * 0.72,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.5),
-                      width: 1.4,
-                    ),
-                  ),
-                ),
-                Container(
-                  width: size * 0.44,
-                  height: size * 0.44,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.7),
-                      width: 1.2,
-                    ),
-                  ),
-                ),
-                if (tapped)
-                  const Icon(
-                    Icons.check_rounded,
-                    color: Color(0xFFF7F5F0),
-                    size: 26,
-                  )
-                else
-                  const Icon(
-                    Icons.blur_on_rounded,
-                    color: Color(0xFF242220),
-                    size: 24,
-                  ),
-              ],
-            ),
+            ],
           ),
         ),
       ),
     );
   }
-}
 
-// ============================================================================
-// 2. COMPUTERS MINIGAME: Chronological Timeline Drag & Drop
-// ============================================================================
-class _ComputerItem {
-  const _ComputerItem({
-    required this.id,
-    required this.name,
-    required this.year,
-    required this.description,
-  });
-
-  final String id;
-  final String name;
-  final int year;
-  final String description;
-}
-
-class ComputersTimelineMinigame extends StatefulWidget {
-  const ComputersTimelineMinigame({super.key, required this.onSuccess});
-  final VoidCallback onSuccess;
-
-  @override
-  State<ComputersTimelineMinigame> createState() => _ComputersTimelineMinigameState();
-}
-
-class _ComputersTimelineMinigameState extends State<ComputersTimelineMinigame> {
-  static const List<_ComputerItem> _canonical = [
-    _ComputerItem(
-      id: 'ibm',
-      name: 'IBM PC/AT',
-      year: 1984,
-      description: '1984 · Microsoft XENIX Unix desktop',
-    ),
-    _ComputerItem(
-      id: 'next',
-      name: 'NeXTstation',
-      year: 1990,
-      description: '1990 · Steve Jobs\' NeXTSTEP workstation',
-    ),
-    _ComputerItem(
-      id: 'sgi',
-      name: 'SGI O2',
-      year: 1996,
-      description: '1996 · Hollywood 3D graphics computer',
-    ),
-    _ComputerItem(
-      id: 'imac',
-      name: 'iMac G3',
-      year: 1998,
-      description: '1998 · Translucent Bondi Blue icon',
-    ),
-  ];
-
-  late List<_ComputerItem> _items;
-  bool _checked = false;
-  bool _isCorrect = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // Shuffled initial order
-    _items = [
-      _canonical[2], // SGI 1996
-      _canonical[0], // IBM 1984
-      _canonical[3], // iMac 1998
-      _canonical[1], // NeXT 1990
-    ];
-  }
-
-  void _verifyOrder() {
-    var correct = true;
-    for (var i = 0; i < _items.length; i++) {
-      if (_items[i].year != _canonical[i].year) {
-        correct = false;
-        break;
-      }
-    }
-    setState(() {
-      _checked = true;
-      _isCorrect = correct;
-    });
-
-    if (correct) {
-      widget.onSuccess();
-    } else {
-      HapticFeedback.lightImpact();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const TrText(
-          'Timeline Challenge: Evolution of Computers',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFFF7F5F0),
-          ),
-        ),
-        const SizedBox(height: 4),
-        const TrText(
-          'Drag the computer cards into strict chronological order from oldest (1984) to newest (1998).',
-          style: TextStyle(fontSize: 13, color: Color(0xFFDDD7CD), height: 1.4),
-        ),
-        const SizedBox(height: 14),
-        ReorderableListView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: _items.length,
-          onReorderItem: (oldIndex, newIndex) {
-            setState(() {
-              final item = _items.removeAt(oldIndex);
-              _items.insert(newIndex, item);
-              _checked = false;
-            });
-          },
-          itemBuilder: (context, index) {
-            final item = _items[index];
-            return Container(
-              key: ValueKey(item.id),
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2B2824),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: _checked
-                      ? (_items[index].year == _canonical[index].year
-                          ? const Color(0xFF5D7A68)
-                          : const Color(0xFFC85A48))
-                      : Colors.white.withValues(alpha: 0.14),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.drag_handle_rounded, color: Color(0xFFD9CBB8), size: 22),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        TrText(
-                          item.name,
-                          style: const TextStyle(
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFFF7F5F0),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        TrText(
-                          item.description,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: const Color(0xFFDDD7CD).withValues(alpha: 0.76),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_checked && _items[index].year == _canonical[index].year)
-                    const Icon(Icons.check_circle_rounded, color: Color(0xFF5D7A68), size: 18),
-                ],
-              ),
-            );
-          },
-        ),
-        const SizedBox(height: 8),
-        if (_checked && !_isCorrect)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 10),
-            child: TrText(
-              'Not quite in chronological order. Hint: IBM PC/AT (1984) is first, followed by NeXTstation (1990)!',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFFE89A8A), fontSize: 12.5),
-            ),
-          ),
-        FilledButton.icon(
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFFF4F1EB),
-            foregroundColor: const Color(0xFF22201E),
-            minimumSize: const Size.fromHeight(48),
-          ),
-          onPressed: _verifyOrder,
-          icon: const Icon(Icons.swap_vert_rounded, size: 18),
-          label: const TrText('Verify Chronological Order'),
-        ),
-      ],
-    );
-  }
-}
-
-// ============================================================================
-// 3. GREENHOUSE MINIGAME: 2x2 Photo Quest Checklist
-// ============================================================================
-class _GreenhouseTarget {
-  const _GreenhouseTarget({
-    required this.id,
-    required this.title,
-    required this.subtitle,
-    required this.icon,
-  });
-
-  final String id;
-  final String title;
-  final String subtitle;
-  final IconData icon;
-}
-
-class GreenhousePhotoMinigame extends StatefulWidget {
-  const GreenhousePhotoMinigame({super.key, required this.onSuccess});
-  final VoidCallback onSuccess;
-
-  @override
-  State<GreenhousePhotoMinigame> createState() => _GreenhousePhotoMinigameState();
-}
-
-class _GreenhousePhotoMinigameState extends State<GreenhousePhotoMinigame> {
-  static const List<_GreenhouseTarget> _targets = [
-    _GreenhouseTarget(
-      id: 'plant',
-      title: 'Greenhouse Plant',
-      subtitle: 'Jungle vegetation & potted flora',
-      icon: Icons.local_florist_rounded,
-    ),
-    _GreenhouseTarget(
-      id: 'thesis',
-      title: 'Doctoral Dissertation',
-      subtitle: 'Public defense theses on shelf',
-      icon: Icons.menu_book_rounded,
-    ),
-    _GreenhouseTarget(
-      id: 'timber',
-      title: 'Wooden Structure',
-      subtitle: 'Pine frame from 2012 workshop',
-      icon: Icons.forest_rounded,
-    ),
-    _GreenhouseTarget(
-      id: 'table',
-      title: 'Discussion Table',
-      subtitle: 'Brainstorming desk in room C130a',
-      icon: Icons.table_restaurant_rounded,
-    ),
-  ];
-
-  final Set<String> _confirmed = <String>{};
-
-  void _confirmTarget(String id) {
-    if (_confirmed.contains(id)) return;
-    HapticFeedback.selectionClick();
-    setState(() {
-      _confirmed.add(id);
-    });
-    if (_confirmed.length >= _targets.length) {
-      widget.onSuccess();
-    }
-  }
-
-  void _confirmAll() {
-    HapticFeedback.selectionClick();
-    setState(() {
-      for (final t in _targets) {
-        _confirmed.add(t.id);
-      }
-    });
-    widget.onSuccess();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const TrText(
-          'Greenhouse 2×2 Photo Quest',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFFF7F5F0),
-          ),
-        ),
-        const SizedBox(height: 4),
-        const TrText(
-          'Confirm all 4 targets inside the student-designed Greenhouse Learning Hub to unlock the puzzle piece.',
-          style: TextStyle(fontSize: 13, color: Color(0xFFDDD7CD), height: 1.4),
-        ),
-        const SizedBox(height: 12),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.15,
-          ),
-          itemCount: _targets.length,
-          itemBuilder: (context, index) {
-            final target = _targets[index];
-            final done = _confirmed.contains(target.id);
-
-            return Material(
-              color: done ? const Color(0xFF26332A) : const Color(0xFF2B2824),
-              borderRadius: BorderRadius.circular(16),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () => _confirmTarget(target.id),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: done
-                          ? const Color(0xFF5D7A68)
-                          : Colors.white.withValues(alpha: 0.14),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Icon(
-                            target.icon,
-                            color: done ? const Color(0xFF5D7A68) : const Color(0xFFD9CBB8),
-                            size: 24,
-                          ),
-                          Icon(
-                            done
-                                ? Icons.check_circle_rounded
-                                : Icons.camera_alt_outlined,
-                            size: 18,
-                            color: done
-                                ? const Color(0xFF5D7A68)
-                                : Colors.white.withValues(alpha: 0.5),
-                          ),
-                        ],
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          TrText(
-                            target.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFFF7F5F0),
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          TrText(
-                            target.subtitle,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              color: const Color(0xFFDDD7CD).withValues(alpha: 0.72),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-        const SizedBox(height: 14),
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFFF4F1EB),
-            side: BorderSide(color: Colors.white.withValues(alpha: 0.24)),
-            minimumSize: const Size.fromHeight(44),
-          ),
-          onPressed: _confirmAll,
-          icon: const Icon(Icons.done_all_rounded, size: 18),
-          label: const TrText('Quick Confirm All Targets (Demo)'),
-        ),
-      ],
-    );
-  }
-}
-
-// ============================================================================
-// 4. PORTRAITS MINIGAME: CS Pioneer Research Quiz
-// ============================================================================
-class _PioneerQuizQuestion {
-  const _PioneerQuizQuestion({
-    required this.pioneerName,
-    required this.role,
-    required this.question,
-    required this.options,
-    required this.correctIndex,
-  });
-
-  final String pioneerName;
-  final String role;
-  final String question;
-  final List<String> options;
-  final int correctIndex;
-}
-
-class PortraitsQuizMinigame extends StatefulWidget {
-  const PortraitsQuizMinigame({super.key, required this.onSuccess});
-  final VoidCallback onSuccess;
-
-  @override
-  State<PortraitsQuizMinigame> createState() => _PortraitsQuizMinigameState();
-}
-
-class _PortraitsQuizMinigameState extends State<PortraitsQuizMinigame> {
-  static const List<_PioneerQuizQuestion> _questions = [
-    _PioneerQuizQuestion(
-      pioneerName: 'Kaisa Nyberg',
-      role: 'Professor Emerita',
-      question: 'Which groundbreaking field did Professor Emerita Kaisa Nyberg pioneer with AES S-boxes & pairing?',
-      options: [
-        'Cryptography & Bluetooth Security',
-        'Computer Graphics & Raytracing',
-        'Quantum Hardware Cooling',
-      ],
-      correctIndex: 0,
-    ),
-    _PioneerQuizQuestion(
-      pioneerName: 'Erkki Oja',
-      role: 'Academy Professor',
-      question: 'What famous neural network rule was formulated by Erkki Oja in 1982?',
-      options: [
-        'Backpropagation Through Time',
-        'Oja\'s Rule (PCA Neural Learning)',
-        'Transformer Attention Matrix',
-      ],
-      correctIndex: 1,
-    ),
-    _PioneerQuizQuestion(
-      pioneerName: 'Hans Andersin',
-      role: 'First CS Professor (1968)',
-      question: 'What was Hans \'Hasse\' Andersin\'s historic contribution to Finnish computing?',
-      options: [
-        'TKK\'s first CS professor and ESKO pioneer',
-        'Author of the Linux Kernel 1.0',
-        'Founder of Nokia Mobile Division',
-      ],
-      correctIndex: 0,
-    ),
-    _PioneerQuizQuestion(
-      pioneerName: 'Teuvo Kohonen',
-      role: 'Academician of Science',
-      question: 'Academician Teuvo Kohonen is world-famous for which foundational AI invention?',
-      options: [
-        'Convolutional Neural Networks',
-        'Relational Database SQL Engine',
-        'Self-Organizing Maps (SOM / Kohonen Networks)',
-      ],
-      correctIndex: 2,
-    ),
-  ];
-
-  int _selectedQuestionIndex = 0;
-  int? _chosenOptionIndex;
-  bool? _isCorrect;
-
-  void _chooseOption(int index) {
-    final q = _questions[_selectedQuestionIndex];
-    final correct = (index == q.correctIndex);
-    setState(() {
-      _chosenOptionIndex = index;
-      _isCorrect = correct;
-    });
-
-    if (correct) {
-      widget.onSuccess();
-    } else {
-      HapticFeedback.lightImpact();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final q = _questions[_selectedQuestionIndex];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const TrText(
-              'CS Pioneers Knowledge Quiz',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFFF7F5F0),
-              ),
-            ),
-            PopupMenuButton<int>(
-              tooltip: 'Switch Pioneer',
-              color: const Color(0xFF2B2824),
-              icon: const Icon(Icons.person_search_rounded, color: Color(0xFFD9CBB8), size: 20),
-              onSelected: (idx) {
-                setState(() {
-                  _selectedQuestionIndex = idx;
-                  _chosenOptionIndex = null;
-                  _isCorrect = null;
-                });
-              },
-              itemBuilder: (context) => [
-                for (var i = 0; i < _questions.length; i++)
-                  PopupMenuItem(
-                    value: i,
-                    child: TrText(_questions[i].pioneerName),
-                  ),
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+  Widget _buildNotFramedWarningBanner() {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(8),
+            color: const Color(0xFF22201E).withValues(alpha: 0.90),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: const Color(0xFFFFB74D),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFFFB74D).withValues(alpha: 0.30),
+                blurRadius: 16,
+                spreadRadius: 2,
+              ),
+            ],
+          ),
+          child: const Row(
+            children: [
+              Icon(
+                Icons.center_focus_strong_rounded,
+                color: Color(0xFFFFB74D),
+                size: 22,
+              ),
+              SizedBox(width: 10),
+              Expanded(
+                child: TrText(
+                  'Center the 3D puzzle piece inside the box before taking the photo!',
+                  style: TextStyle(
+                    color: Color(0xFFF7F5F0),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOffScreenRadarIndicator({
+    required Size screenSize,
+    required double edgeAngle,
+    required double deltaYaw,
+    required double deltaPitch,
+  }) {
+    final radiusX = screenSize.width * 0.40;
+    final radiusY = screenSize.height * 0.36;
+
+    final cx = screenSize.width * 0.5;
+    final cy = screenSize.height * 0.5;
+
+    final posX = cx + radiusX * math.cos(edgeAngle);
+    final posY = cy + radiusY * math.sin(edgeAngle);
+
+    String directionHint;
+    if (deltaYaw.abs() > 40.0) {
+      directionHint = deltaYaw > 0
+          ? 'Turn right (+${deltaYaw.toInt()}°)'
+          : 'Turn left (${deltaYaw.toInt()}°)';
+    } else if (deltaPitch > 15.0) {
+      directionHint = 'Look up (+${deltaPitch.toInt()}°)';
+    } else if (deltaPitch < -15.0) {
+      directionHint = 'Look down (${deltaPitch.toInt()}°)';
+    } else if (deltaYaw > 0) {
+      directionHint = 'Turn right (+${deltaYaw.toInt()}°)';
+    } else {
+      directionHint = 'Turn left (${deltaYaw.toInt()}°)';
+    }
+
+    const pillEstimatedWidth = 175.0;
+    const pillEstimatedHeight = 42.0;
+
+    final maxLeft = math.max(16.0, screenSize.width - pillEstimatedWidth - 16.0);
+    final clampedLeft = (posX - pillEstimatedWidth * 0.5).clamp(16.0, maxLeft);
+
+    final maxTop = math.max(88.0, screenSize.height - pillEstimatedHeight - 120.0);
+    final clampedTop = (posY - pillEstimatedHeight * 0.5).clamp(88.0, maxTop);
+
+    return Positioned(
+      left: clampedLeft,
+      top: clampedTop,
+      child: IgnorePointer(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF22201E).withValues(alpha: 0.88),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: const Color(0xFFD9CBB8).withValues(alpha: 0.65),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFD9CBB8).withValues(alpha: 0.25),
+                blurRadius: 16,
+                spreadRadius: 2,
+              ),
+            ],
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.verified_user_outlined, size: 14, color: Color(0xFFD9CBB8)),
+              Transform.rotate(
+                angle: edgeAngle,
+                child: const Icon(
+                  Icons.arrow_forward_rounded,
+                  size: 16,
+                  color: Color(0xFFD9CBB8),
+                ),
+              ),
               const SizedBox(width: 6),
               TrText(
-                '${q.pioneerName} · ${q.role}',
+                directionHint,
                 style: const TextStyle(
-                  color: Color(0xFFD9CBB8),
-                  fontSize: 12,
+                  color: Color(0xFFF7F5F0),
+                  fontSize: 11.5,
                   fontWeight: FontWeight.w600,
                 ),
               ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        TrText(
-          q.question,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFFF7F5F0),
-            height: 1.4,
-          ),
-        ),
-        const SizedBox(height: 14),
-        for (var i = 0; i < q.options.length; i++) ...[
-          _buildOptionButton(
-            index: i,
-            text: q.options[i],
-            isCorrectChoice: i == q.correctIndex,
-          ),
-          const SizedBox(height: 8),
-        ],
-        if (_isCorrect == false)
-          const Padding(
-            padding: EdgeInsets.only(top: 6),
-            child: TrText(
-              'Not that field! Re-read the pioneer plaque and try another option.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFFE89A8A), fontSize: 12.5),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildOptionButton({
-    required int index,
-    required String text,
-    required bool isCorrectChoice,
-  }) {
-    Color border = Colors.white.withValues(alpha: 0.16);
-    Color bg = const Color(0xFF2B2824);
-
-    if (_chosenOptionIndex == index) {
-      if (isCorrectChoice) {
-        border = const Color(0xFF5D7A68);
-        bg = const Color(0xFF26332A);
-      } else {
-        border = const Color(0xFFC85A48);
-        bg = const Color(0xFF33201E);
-      }
-    }
-
-    return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => _chooseOption(index),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: border),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.10),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  String.fromCharCode(65 + index), // A, B, C
-                  style: const TextStyle(
-                    color: Color(0xFFF7F5F0),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
+              const SizedBox(width: 4),
+              Text(
+                '· ${_offset.distance}m',
+                style: TextStyle(
+                  color: const Color(0xFFF7F5F0).withValues(alpha: 0.70),
+                  fontSize: 10.5,
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TrText(
-                  text,
-                  style: const TextStyle(
-                    fontSize: 13.5,
-                    color: Color(0xFFF7F5F0),
-                  ),
-                ),
-              ),
-              if (_chosenOptionIndex == index)
-                Icon(
-                  isCorrectChoice ? Icons.check_circle_rounded : Icons.cancel_rounded,
-                  color: isCorrectChoice ? const Color(0xFF5D7A68) : const Color(0xFFC85A48),
-                  size: 18,
-                ),
             ],
           ),
         ),
       ),
     );
   }
-}
 
-// ============================================================================
-// 5. CANTEEN MINIGAME: 15-Second Subway Builder
-// ============================================================================
-class CanteenSubwayMinigame extends StatefulWidget {
-  const CanteenSubwayMinigame({super.key, required this.onSuccess});
-  final VoidCallback onSuccess;
+  Widget _buildTopHeaderBar() {
+    final settings = Zen.findOrNull<AppSettingsController>();
+    final isDemoMode = settings?.demoUnlockAll.value ?? false;
 
-  @override
-  State<CanteenSubwayMinigame> createState() => _CanteenSubwayMinigameState();
-}
-
-class _CanteenSubwayMinigameState extends State<CanteenSubwayMinigame> {
-  static const int _totalSeconds = 15;
-  int _secondsRemaining = _totalSeconds;
-  Timer? _timer;
-  int _step = 0; // 0 -> Bread, 1 -> Filling, 2 -> Sauce
-
-  static const List<String> _targetRecipe = [
-    'Italian Herbs & Cheese Bread',
-    'Turkey & Smoked Cheddar',
-    'Chipotle Southwest Sauce',
-  ];
-
-  static const List<String> _options = [
-    'Italian Herbs & Cheese Bread',
-    'Gluten-Free Rye',
-    'Turkey & Smoked Cheddar',
-    'Tuna & Sweetcorn',
-    'Chipotle Southwest Sauce',
-    'Sweet Onion Teriyaki',
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    _startTimer();
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  void _startTimer() {
-    _secondsRemaining = _totalSeconds;
-    _step = 0;
-    _timer?.cancel();
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) return;
-      setState(() {
-        if (_secondsRemaining > 1) {
-          _secondsRemaining--;
-        } else {
-          _secondsRemaining = 0;
-          timer.cancel();
-        }
-      });
-    });
-  }
-
-  void _tapIngredient(String item) {
-    if (_secondsRemaining <= 0 || _step >= 3) return;
-
-    if (item == _targetRecipe[_step]) {
-      HapticFeedback.selectionClick();
-      setState(() {
-        _step++;
-      });
-      if (_step == 3) {
-        _timer?.cancel();
-        widget.onSuccess();
-      }
-    } else {
-      HapticFeedback.lightImpact();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final expired = _secondsRemaining <= 0 && _step < 3;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+        child: Row(
           children: [
-            const TrText(
-              'Speed Sub Builder (15s)',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFFF7F5F0),
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: _secondsRemaining <= 4
-                    ? const Color(0xFFC85A48).withValues(alpha: 0.3)
-                    : Colors.white.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.timer_outlined, size: 14, color: Color(0xFFD9CBB8)),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${_secondsRemaining}s',
-                    style: TextStyle(
-                      color: _secondsRemaining <= 4
-                          ? const Color(0xFFE89A8A)
-                          : const Color(0xFFF7F5F0),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        LinearProgressIndicator(
-          value: _secondsRemaining / _totalSeconds,
-          backgroundColor: Colors.white.withValues(alpha: 0.12),
-          valueColor: AlwaysStoppedAnimation(
-            _secondsRemaining <= 4 ? const Color(0xFFC85A48) : const Color(0xFFD9CBB8),
-          ),
-          borderRadius: BorderRadius.circular(4),
-          minHeight: 5,
-        ),
-        const SizedBox(height: 12),
-        TrText(
-          _step < 3
-              ? 'Step ${_step + 1} of 3: Tap "${_targetRecipe[_step]}" to build the sandwich!'
-              : 'Subway successfully assembled!',
-          style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFFD9CBB8),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final item in _options)
-              Material(
-                color: const Color(0xFF2B2824),
-                borderRadius: BorderRadius.circular(12),
+            // Close / Back button
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
                 child: InkWell(
+                  onTap: () => Navigator.of(context).pop(),
                   borderRadius: BorderRadius.circular(12),
-                  onTap: () => _tapIngredient(item),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
+                      color: const Color(0xFF22201E).withValues(alpha: 0.65),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: _targetRecipe.take(_step).contains(item)
-                            ? const Color(0xFF5D7A68)
-                            : Colors.white.withValues(alpha: 0.14),
+                        color: Colors.white.withValues(alpha: 0.16),
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.arrow_back_rounded,
+                      color: Color(0xFFF7F5F0),
+                      size: 20,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+
+            // Station & Piece Indicator Pill
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF22201E).withValues(alpha: 0.65),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.16),
                       ),
                     ),
                     child: Row(
-                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (_targetRecipe.take(_step).contains(item))
-                          const Padding(
-                            padding: EdgeInsets.only(right: 6),
-                            child: Icon(Icons.check_rounded, color: Color(0xFF5D7A68), size: 16),
-                          ),
-                        TrText(
-                          item,
-                          style: const TextStyle(
-                            fontSize: 12.5,
-                            color: Color(0xFFF7F5F0),
+                        PuzzlePieceIcon(
+                          collected: _isCollected,
+                          size: 16,
+                          activeColor: const Color(0xFFD9CBB8),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              TrText(
+                                widget.station.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFFF7F5F0),
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              TrText(
+                                'Piece ${_offset.tileIndex + 1} of ${widget.progress.totalPuzzleStations > 0 ? widget.progress.totalPuzzleStations : 8} · ${_offset.title}',
+                                style: TextStyle(
+                                  color: const Color(0xFFD9CBB8)
+                                      .withValues(alpha: 0.85),
+                                  fontSize: 10.5,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
+                        if (_hasSensorsActive)
+                          Container(
+                            margin: const EdgeInsets.only(left: 4),
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF81C784)
+                                   .withValues(alpha: 0.20),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.explore_rounded,
+                              size: 13,
+                              color: Color(0xFF81C784),
+                            ),
+                          ),
                       ],
                     ),
                   ),
                 ),
               ),
+            ),
+            if (isDemoMode) ...[
+              const SizedBox(width: 8),
+
+              // Recenter heading button
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: InkWell(
+                    onTap: _recenterHeading,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.all(9),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF22201E).withValues(alpha: 0.65),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.16),
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.my_location_rounded,
+                        color: Color(0xFFD9CBB8),
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+
+              // Demo Instant Catch Button
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: InkWell(
+                    onTap: () => _onShutterPressed(isFramed: true),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF22201E).withValues(alpha: 0.65),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: const Color(0xFFD9CBB8).withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.auto_awesome_rounded,
+                            size: 14,
+                            color: Color(0xFFD9CBB8),
+                          ),
+                          SizedBox(width: 3),
+                          TrText(
+                            'Demo',
+                            style: TextStyle(
+                              color: Color(0xFFD9CBB8),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
-        const SizedBox(height: 12),
-        if (expired) ...[
-          const Center(
-            child: TrText(
-              'Time expired! Press Retry to restart the 15-second rush.',
-              style: TextStyle(color: Color(0xFFE89A8A), fontSize: 12.5),
+      ),
+    );
+  }
+
+  Widget _buildBottomActionBar({required bool isFramed}) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Camera Shutter Button (Active when isFramed)
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                GestureDetector(
+                  onTap: () => _onShutterPressed(isFramed: isFramed),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: 76,
+                    height: 76,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _isCollected
+                            ? const Color(0xFF81C784)
+                            : (isFramed
+                                ? const Color(0xFF81C784)
+                                : Colors.white.withValues(alpha: 0.45)),
+                        width: 3.5,
+                      ),
+                      color: _isCapturing
+                          ? const Color(0xFFD9CBB8)
+                          : (isFramed
+                              ? const Color(0xFF81C784).withValues(alpha: 0.22)
+                              : Colors.white.withValues(alpha: 0.10)),
+                      boxShadow: [
+                        BoxShadow(
+                          color: (isFramed
+                                  ? const Color(0xFF81C784)
+                                  : const Color(0xFFD9CBB8))
+                              .withValues(alpha: isFramed ? 0.55 : 0.15),
+                          blurRadius: isFramed ? 24 : 14,
+                          spreadRadius: isFramed ? 3 : 1,
+                        ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Container(
+                        width: 58,
+                        height: 58,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: _isCollected
+                              ? const Color(0xFF81C784)
+                              : (isFramed
+                                  ? const Color(0xFF81C784)
+                                  : (_isCapturing
+                                      ? const Color(0xFF141312)
+                                      : const Color(0xFFD9CBB8))),
+                        ),
+                        child: Icon(
+                          _isCollected
+                              ? Icons.check_rounded
+                              : Icons.camera_alt_rounded,
+                          size: 28,
+                          color: const Color(0xFF141312),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFFF4F1EB),
-              side: BorderSide(color: Colors.white.withValues(alpha: 0.24)),
-              minimumSize: const Size.fromHeight(44),
+            const SizedBox(height: 6),
+            TrText(
+              _isCollected
+                  ? 'Piece Already Collected'
+                  : (isFramed
+                      ? 'Press Shutter to Snap Photo!'
+                      : 'Center the 3D piece in the frame to photograph it'),
+              style: TextStyle(
+                color: isFramed
+                    ? const Color(0xFF81C784)
+                    : const Color(0xFFF7F5F0).withValues(alpha: 0.8),
+                fontSize: 11.5,
+                fontWeight: isFramed ? FontWeight.w700 : FontWeight.w600,
+              ),
             ),
-            onPressed: _startTimer,
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const TrText('Retry Sub Rush'),
-          ),
-        ],
-        const SizedBox(height: 6),
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: const TrText(
-            'Campus Tip: CS building Subway serves Kela-subsidized ~3.10 € student lunch subs with Frank / Slice card.',
-            style: TextStyle(fontSize: 11.5, color: Color(0xFFDDD7CD)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSafetyPreflightOverlay() {
+    return Positioned.fill(
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.72),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 28),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                child: Container(
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF22201E).withValues(alpha: 0.90),
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(
+                      color: const Color(0xFFD9CBB8).withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.visibility_rounded,
+                        size: 40,
+                        color: Color(0xFFD9CBB8),
+                      ),
+                      const SizedBox(height: 14),
+                      const TrText(
+                        'Stay Aware of Your Surroundings',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFFF7F5F0),
+                          fontSize: 18,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const TrText(
+                        'Stop walking, check around for obstacles and other visitors, and point your camera to discover the world-locked puzzle piece.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFFD9CBB8),
+                          fontSize: 13.5,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFD9CBB8),
+                            foregroundColor: const Color(0xFF141312),
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 0,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _hasAcceptedPreflight = true;
+                            });
+                          },
+                          child: const TrText(
+                            'I Am Ready — Start AR Hunt',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
         ),
-      ],
+      ),
     );
   }
 }
 
-// ============================================================================
-// 6. GUILDS MINIGAME: Tap to Match Guild to Overalls & Room
-// ============================================================================
-class _GuildMatchItem {
-  const _GuildMatchItem({
-    required this.id,
-    required this.name,
-    required this.description,
-    required this.color,
+/// Dynamic 3D Spinning Puzzle Piece Widget.
+///
+/// Clean, single-card 3D perspective rotation around the Y-axis without
+/// negative-Z depth artifacts or Skia glitching.
+/// Slices the master artwork cleanly, features smooth continuous rotation,
+/// specular glass sheen, and a glowing halo.
+class Spinning3DPuzzlePiece extends StatefulWidget {
+  const Spinning3DPuzzlePiece({
+    super.key,
+    required this.tileIndex,
+    required this.stationTitle,
+    this.masterImageAsset = kPuzzleImageAsset,
+    this.size = 130.0,
+    this.isCollected = false,
+    this.onTap,
   });
 
-  final String id;
-  final String name;
-  final String description;
-  final Color color;
-}
-
-class GuildsMatchMinigame extends StatefulWidget {
-  const GuildsMatchMinigame({super.key, required this.onSuccess});
-  final VoidCallback onSuccess;
+  final int tileIndex;
+  final String stationTitle;
+  final String masterImageAsset;
+  final double size;
+  final bool isCollected;
+  final VoidCallback? onTap;
 
   @override
-  State<GuildsMatchMinigame> createState() => _GuildsMatchMinigameState();
+  State<Spinning3DPuzzlePiece> createState() => _Spinning3DPuzzlePieceState();
 }
 
-class _GuildsMatchMinigameState extends State<GuildsMatchMinigame> {
-  static const List<_GuildMatchItem> _guilds = [
-    _GuildMatchItem(
-      id: 'tik',
-      name: 'Tietokilta (TiK)',
-      description: 'All-black overalls with @ tassel · Room C114 · 1986',
-      color: Color(0xFF262523),
-    ),
-    _GuildMatchItem(
-      id: 'athene',
-      name: 'Athene',
-      description: 'Forest green with black sleeve · Room A117 PALLASKATU',
-      color: Color(0xFF5C554C),
-    ),
-    _GuildMatchItem(
-      id: 'dg',
-      name: 'Data Guild',
-      description: 'Black with silver sleeve · Room A120b Database · 2019',
-      color: Color(0xFF6E665C),
-    ),
-  ];
+class _Spinning3DPuzzlePieceState extends State<Spinning3DPuzzlePiece>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _rotationController;
 
-  String? _selectedGuildId;
-  final Set<String> _matchedIds = <String>{};
-
-  void _tapGuild(String id) {
-    if (_matchedIds.contains(id)) return;
-    HapticFeedback.selectionClick();
-    setState(() {
-      _selectedGuildId = id;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _rotationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 4000),
+    )..repeat();
   }
 
-  void _tapDescription(String id) {
-    if (_matchedIds.contains(id)) return;
-    if (_selectedGuildId == null) return;
-
-    if (_selectedGuildId == id) {
-      HapticFeedback.selectionClick();
-      setState(() {
-        _matchedIds.add(id);
-        _selectedGuildId = null;
-      });
-      if (_matchedIds.length >= _guilds.length) {
-        widget.onSuccess();
-      }
-    } else {
-      HapticFeedback.lightImpact();
-      setState(() {
-        _selectedGuildId = null;
-      });
-    }
+  @override
+  void dispose() {
+    _rotationController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const TrText(
-          'Match the 3 Student Guilds',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFFF7F5F0),
-          ),
-        ),
-        const SizedBox(height: 4),
-        const TrText(
-          'Select a guild on the left, then tap its matching overalls and room description on the right.',
-          style: TextStyle(fontSize: 13, color: Color(0xFFDDD7CD), height: 1.4),
-        ),
-        const SizedBox(height: 14),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Left: Guilds
-            Expanded(
-              flex: 4,
-              child: Column(
-                children: [
-                  for (final g in _guilds) ...[
-                    _buildGuildCard(g),
-                    const SizedBox(height: 8),
+    return AnimatedBuilder(
+      animation: _rotationController,
+      builder: (context, _) {
+        final animValue = _rotationController.value;
+        final angle = animValue * 2.0 * math.pi;
+
+        // Floating vertical bobbing animation
+        final bobbingY = math.sin(animValue * 2.0 * math.pi) * 6.0;
+
+        // Subtle 3D dynamic tilt
+        final pitchTilt = math.sin(animValue * 4.0 * math.pi) * 0.05;
+
+        // Determine which side is facing the camera
+        final isFrontFacing = math.cos(angle) >= 0.0;
+
+        // Matrix4 with perspective distortion along Z-axis
+        final transformMatrix = Matrix4.identity()
+          ..setEntry(3, 2, 0.0012)
+          ..translateByDouble(0.0, bobbingY, 0.0, 1.0)
+          ..rotateY(angle)
+          ..rotateX(pitchTilt);
+
+        return GestureDetector(
+          onTap: widget.onTap,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Outer glowing aura halo
+              Container(
+                width: widget.size * 1.15,
+                height: widget.size * 1.15,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: (widget.isCollected
+                              ? const Color(0xFF81C784)
+                              : const Color(0xFFD9CBB8))
+                          .withValues(alpha: 0.35),
+                      blurRadius: 28,
+                      spreadRadius: 4,
+                    ),
                   ],
-                ],
+                ),
+              ),
+
+              // 3D Perspective Rotated Piece
+              Transform(
+                alignment: Alignment.center,
+                transform: transformMatrix,
+                child: SizedBox(
+                  width: widget.size,
+                  height: widget.size,
+                  child: isFrontFacing ? _buildFrontFace() : _buildBackFace(),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildFrontFace() {
+    final row = widget.tileIndex ~/ 3;
+    final col = widget.tileIndex % 3;
+    final fullBoardSize = widget.size * 3.0;
+
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: widget.isCollected
+              ? const Color(0xFF81C784)
+              : const Color(0xFFD9CBB8),
+          width: 2.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.50),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(13.5),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Dynamically cropped slice of master artwork
+            Positioned(
+              left: -col * widget.size,
+              top: -row * widget.size,
+              width: fullBoardSize,
+              height: fullBoardSize,
+              child: Image.asset(
+                widget.masterImageAsset,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => Image.asset(
+                  kFallbackPuzzleImageAsset,
+                  fit: BoxFit.cover,
+                ),
               ),
             ),
-            const SizedBox(width: 10),
-            // Right: Descriptions (shuffled order: athene, dg, tik)
-            Expanded(
-              flex: 6,
-              child: Column(
-                children: [
-                  _buildDescCard(_guilds[1]), // Athene
-                  const SizedBox(height: 8),
-                  _buildDescCard(_guilds[2]), // DG
-                  const SizedBox(height: 8),
-                  _buildDescCard(_guilds[0]), // TiK
-                ],
+
+            // Diagonal specular glass highlight
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.white.withValues(alpha: 0.25),
+                    Colors.transparent,
+                    Colors.transparent,
+                    Colors.white.withValues(alpha: 0.10),
+                  ],
+                ),
+              ),
+            ),
+
+            // Number badge on top-left corner
+            Positioned(
+              top: 6,
+              left: 6,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.65),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.25),
+                  ),
+                ),
+                child: Text(
+                  '#${widget.tileIndex + 1}',
+                  style: const TextStyle(
+                    color: Color(0xFFF7F5F0),
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
               ),
             ),
           ],
         ),
-      ],
+      ),
     );
   }
 
-  Widget _buildGuildCard(_GuildMatchItem g) {
-    final isMatched = _matchedIds.contains(g.id);
-    final isSelected = _selectedGuildId == g.id;
-
-    return Material(
-      color: isMatched
-          ? const Color(0xFF26332A)
-          : (isSelected ? const Color(0xFF453D34) : const Color(0xFF2B2824)),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _tapGuild(g.id),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: isMatched
-                  ? const Color(0xFF5D7A68)
-                  : (isSelected ? const Color(0xFFD9CBB8) : Colors.white.withValues(alpha: 0.14)),
-              width: isSelected ? 1.8 : 1.0,
-            ),
+  Widget _buildBackFace() {
+    // Invert horizontal scale so text on the back side is readable and not mirrored
+    return Transform(
+      alignment: Alignment.center,
+      transform: Matrix4.identity()..rotateY(math.pi),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: const Color(0xFFD9CBB8),
+            width: 2.5,
           ),
-          alignment: Alignment.center,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          gradient: const LinearGradient(
+            colors: [
+              Color(0xFF2C2825),
+              Color(0xFF1B1917),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.50),
+              blurRadius: 10,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(13.5),
+          child: Stack(
+            fit: StackFit.expand,
             children: [
-              if (isMatched)
-                const Padding(
-                  padding: EdgeInsets.only(right: 6),
-                  child: Icon(Icons.check_rounded, color: Color(0xFF5D7A68), size: 16),
-                ),
-              Flexible(
-                child: TrText(
-                  g.name,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFFF7F5F0),
-                  ),
+              // Subtle circuit trace background
+              CustomPaint(
+                painter: _CircuitBackingPainter(),
+              ),
+
+              // Backplate Content
+              Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const PuzzlePieceIcon(
+                      collected: true,
+                      size: 26,
+                      activeColor: Color(0xFFD9CBB8),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      'PIECE ${widget.tileIndex + 1}/9',
+                      style: const TextStyle(
+                        color: Color(0xFFF7F5F0),
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      child: Text(
+                        widget.stationTitle,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color:
+                              const Color(0xFFD9CBB8).withValues(alpha: 0.85),
+                          fontSize: 9.0,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -1548,518 +1505,75 @@ class _GuildsMatchMinigameState extends State<GuildsMatchMinigame> {
       ),
     );
   }
-
-  Widget _buildDescCard(_GuildMatchItem g) {
-    final isMatched = _matchedIds.contains(g.id);
-
-    return Material(
-      color: isMatched ? const Color(0xFF26332A) : const Color(0xFF2B2824),
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _tapDescription(g.id),
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: isMatched
-                  ? const Color(0xFF5D7A68)
-                  : Colors.white.withValues(alpha: 0.14),
-            ),
-          ),
-          child: TrText(
-            g.description,
-            style: TextStyle(
-              fontSize: 11.5,
-              color: isMatched ? const Color(0xFFF7F5F0) : const Color(0xFFDDD7CD),
-              height: 1.3,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
-// ============================================================================
-// 7. STUDY PLACES MINIGAME: Aalto Space Tablet Free Room Rush
-// ============================================================================
-class StudyPlacesRoomRushMinigame extends StatefulWidget {
-  const StudyPlacesRoomRushMinigame({super.key, required this.onSuccess});
-  final VoidCallback onSuccess;
+/// Simulated Camera Grid Painter with dynamic yaw/pitch shifting.
+class _CameraGridPainter extends CustomPainter {
+  const _CameraGridPainter({
+    required this.yaw,
+    required this.pitch,
+  });
 
-  @override
-  State<StudyPlacesRoomRushMinigame> createState() => _StudyPlacesRoomRushMinigameState();
-}
-
-class _StudyPlacesRoomRushMinigameState extends State<StudyPlacesRoomRushMinigame> {
-  static const List<String> _rooms = ['C130e', 'C134 Tomato', 'C135 Cucumber', 'C136 Carrot'];
-  int _freeIndex = 0;
-  Timer? _rotationTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _startRotation();
-  }
-
-  @override
-  void dispose() {
-    _rotationTimer?.cancel();
-    super.dispose();
-  }
-
-  void _startRotation() {
-    _rotationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (!mounted) return;
-      setState(() {
-        _freeIndex = (_freeIndex + 1) % _rooms.length;
-      });
-    });
-  }
-
-  void _tapTablet(int index) {
-    if (index == _freeIndex) {
-      _rotationTimer?.cancel();
-      HapticFeedback.selectionClick();
-      widget.onSuccess();
-    } else {
-      HapticFeedback.lightImpact();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const TrText(
-          'Aalto Space: Find the Free Room',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFFF7F5F0),
-          ),
-        ),
-        const SizedBox(height: 4),
-        const TrText(
-          'Door tablets outside pods glow green when free and red when occupied. Room states shift every 2s — tap the GREEN tablet to claim the room!',
-          style: TextStyle(fontSize: 13, color: Color(0xFFDDD7CD), height: 1.4),
-        ),
-        const SizedBox(height: 14),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            mainAxisSpacing: 10,
-            crossAxisSpacing: 10,
-            childAspectRatio: 1.25,
-          ),
-          itemCount: _rooms.length,
-          itemBuilder: (context, index) {
-            final isFree = (index == _freeIndex);
-            final statusColor = isFree ? const Color(0xFF5D7A68) : const Color(0xFFC85A48);
-            final statusLabel = isFree ? 'FREE · AVAILABLE' : 'OCCUPIED';
-
-            return Material(
-              color: isFree ? const Color(0xFF26332A) : const Color(0xFF33201E),
-              borderRadius: BorderRadius.circular(16),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () => _tapTablet(index),
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: statusColor, width: isFree ? 2 : 1),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Container(
-                            width: 10,
-                            height: 10,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: statusColor,
-                            ),
-                          ),
-                          Icon(
-                            isFree ? Icons.meeting_room_outlined : Icons.lock_clock_outlined,
-                            size: 16,
-                            color: statusColor,
-                          ),
-                        ],
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          TrText(
-                            _rooms[index],
-                            style: const TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFFF7F5F0),
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          TrText(
-                            statusLabel,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                              color: statusColor,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        ),
-      ],
-    );
-  }
-}
-
-// ============================================================================
-// 8. LOCKED CORRIDORS MINIGAME: PCB Circuit Connect (2F mural)
-// ============================================================================
-class LockedCorridorsPcbMinigame extends StatefulWidget {
-  const LockedCorridorsPcbMinigame({super.key, required this.onSuccess});
-  final VoidCallback onSuccess;
-
-  @override
-  State<LockedCorridorsPcbMinigame> createState() => _LockedCorridorsPcbMinigameState();
-}
-
-class _LockedCorridorsPcbMinigameState extends State<LockedCorridorsPcbMinigame> {
-  // 3x3 grid rotation angles in quadrants: 0 = 0°, 1 = 90°, 2 = 180°, 3 = 270°
-  // Initial scrambled puzzle where solution connects cell (0,0) [Input] -> (2,2) [Output]
-  late List<int> _rotations;
-
-  @override
-  void initState() {
-    super.initState();
-    _rotations = [1, 2, 3, 0, 2, 1, 3, 1, 0];
-  }
-
-  void _rotateTile(int index) {
-    HapticFeedback.selectionClick();
-    setState(() {
-      _rotations[index] = (_rotations[index] + 1) % 4;
-    });
-
-    if (_isCircuitClosed()) {
-      widget.onSuccess();
-    }
-  }
-
-  bool _isCircuitClosed() {
-    // Condition: corner (0) must face right (0 or 2), center (4) must connect, and end (8) must face right
-    // Simplified elegant check so the player solves it within 10-15s
-    return (_rotations[0] == 0 && _rotations[1] == 0 && _rotations[4] == 1 && _rotations[7] == 0 && _rotations[8] == 0);
-  }
-
-  void _solveInstantly() {
-    setState(() {
-      _rotations[0] = 0;
-      _rotations[1] = 0;
-      _rotations[4] = 1;
-      _rotations[7] = 0;
-      _rotations[8] = 0;
-    });
-    widget.onSuccess();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const TrText(
-          'PCB Circuit Connector',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFFF7F5F0),
-          ),
-        ),
-        const SizedBox(height: 4),
-        const TrText(
-          'Inspired by the 2nd-floor staff café motherboard mural! Tap tiles to rotate copper tracks and connect power from Input (top-left) to the Lab Wing Output (bottom-right).',
-          style: TextStyle(fontSize: 13, color: Color(0xFFDDD7CD), height: 1.4),
-        ),
-        const SizedBox(height: 14),
-        Center(
-          child: Container(
-            width: 220,
-            height: 220,
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: const Color(0xFF1E2822),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFD9CBB8).withValues(alpha: 0.3)),
-            ),
-            child: GridView.builder(
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 3,
-                crossAxisSpacing: 6,
-                mainAxisSpacing: 6,
-              ),
-              itemCount: 9,
-              itemBuilder: (context, index) {
-                final rot = _rotations[index];
-
-                return GestureDetector(
-                  onTap: () => _rotateTile(index),
-                  child: AnimatedRotation(
-                    turns: rot / 4.0,
-                    duration: const Duration(milliseconds: 200),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2B3A31),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-                      ),
-                      child: CustomPaint(
-                        painter: _PcbTrackPainter(index: index),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFFF4F1EB),
-            side: BorderSide(color: Colors.white.withValues(alpha: 0.24)),
-            minimumSize: const Size.fromHeight(44),
-          ),
-          onPressed: _solveInstantly,
-          icon: const Icon(Icons.auto_fix_high_rounded, size: 18),
-          label: const TrText('Auto-Connect Circuit (Demo)'),
-        ),
-      ],
-    );
-  }
-}
-
-class _PcbTrackPainter extends CustomPainter {
-  const _PcbTrackPainter({required this.index});
-  final int index;
+  final double yaw;
+  final double pitch;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final copperPaint = Paint()
-      ..color = const Color(0xFFD9CBB8)
-      ..strokeWidth = 3.5
+    final linePaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.05)
+      ..strokeWidth = 1.0;
+
+    const step = 48.0;
+    final offsetX = (yaw * 3.0) % step;
+    final offsetY = (pitch * 3.0) % step;
+
+    for (var x = -step + offsetX; x < size.width + step; x += step) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), linePaint);
+    }
+    for (var y = -step + offsetY; y < size.height + step; y += step) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), linePaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _CameraGridPainter oldDelegate) =>
+      oldDelegate.yaw != yaw || oldDelegate.pitch != pitch;
+}
+
+/// Circuit Trace Painter for the 3D Puzzle Piece's backplate.
+class _CircuitBackingPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final tracePaint = Paint()
+      ..color = const Color(0xFFD9CBB8).withValues(alpha: 0.14)
+      ..strokeWidth = 1.2
       ..style = PaintingStyle.stroke;
 
     final dotPaint = Paint()
-      ..color = const Color(0xFFE5D5C0)
+      ..color = const Color(0xFFD9CBB8).withValues(alpha: 0.22)
       ..style = PaintingStyle.fill;
 
-    final midX = size.width * 0.5;
-    final midY = size.height * 0.5;
+    final path = Path()
+      ..moveTo(size.width * 0.15, size.height * 0.2)
+      ..lineTo(size.width * 0.4, size.height * 0.2)
+      ..lineTo(size.width * 0.5, size.height * 0.35)
+      ..moveTo(size.width * 0.85, size.height * 0.8)
+      ..lineTo(size.width * 0.6, size.height * 0.8)
+      ..lineTo(size.width * 0.5, size.height * 0.65);
 
-    // Draw track depending on whether it's elbow or straight
-    if (index % 2 == 0) {
-      // Elbow corner track
-      final path = Path()
-        ..moveTo(0, midY)
-        ..lineTo(midX, midY)
-        ..lineTo(midX, size.height);
-      canvas.drawPath(path, copperPaint);
-    } else {
-      // Straight horizontal track
-      canvas.drawLine(Offset(0, midY), Offset(size.width, midY), copperPaint);
-    }
-
-    canvas.drawCircle(Offset(midX, midY), 3.0, dotPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant _PcbTrackPainter oldDelegate) => false;
-}
-
-// ============================================================================
-// 9. TUAS BRIDGE MINIGAME: Directional Compass to Maarintie 8
-// ============================================================================
-class TuasBridgeCompassMinigame extends StatefulWidget {
-  const TuasBridgeCompassMinigame({super.key, required this.onSuccess});
-  final VoidCallback onSuccess;
-
-  @override
-  State<TuasBridgeCompassMinigame> createState() => _TuasBridgeCompassMinigameState();
-}
-
-class _TuasBridgeCompassMinigameState extends State<TuasBridgeCompassMinigame> {
-  static const double _targetDegrees = 45.0; // North-East towards TUAS
-  double _currentDegrees = 180.0;
-  bool _aligned = false;
-
-  void _onPanUpdate(DragUpdateDetails details, Size size) {
-    if (_aligned) return;
-    final center = Offset(size.width * 0.5, size.height * 0.5);
-    final pos = details.localPosition - center;
-    var deg = (math.atan2(pos.dy, pos.dx) * 180.0 / math.pi) + 90.0;
-    if (deg < 0) deg += 360.0;
-
-    final diff = (deg - _targetDegrees).abs();
-    if (diff <= 8.0 || diff >= 352.0) {
-      if (!_aligned) {
-        HapticFeedback.mediumImpact();
-        setState(() {
-          _currentDegrees = _targetDegrees;
-          _aligned = true;
-        });
-        widget.onSuccess();
-      }
-    } else {
-      setState(() {
-        _currentDegrees = deg;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const TrText(
-          'Skybridge Compass to Maarintie 8',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFFF7F5F0),
-          ),
-        ),
-        const SizedBox(height: 4),
-        const TrText(
-          'Rotate the compass dial to point toward the 2nd-floor skybridge connecting to TUAS building (Maarintie 8) at 45° North-East.',
-          style: TextStyle(fontSize: 13, color: Color(0xFFDDD7CD), height: 1.4),
-        ),
-        const SizedBox(height: 14),
-        Center(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              const dialSize = 190.0;
-
-              return GestureDetector(
-                onPanUpdate: (d) => _onPanUpdate(d, const Size(dialSize, dialSize)),
-                child: Container(
-                  width: dialSize,
-                  height: dialSize,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: const Color(0xFF242220),
-                    border: Border.all(
-                      color: _aligned ? const Color(0xFF5D7A68) : const Color(0xFFD9CBB8).withValues(alpha: 0.35),
-                      width: _aligned ? 2.5 : 1.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.4),
-                        blurRadius: 16,
-                      ),
-                    ],
-                  ),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      // Cardinal markers
-                      const Positioned(top: 8, child: Text('N', style: TextStyle(color: Color(0xFFDDD7CD), fontSize: 11, fontWeight: FontWeight.w700))),
-                      const Positioned(right: 10, child: Text('E', style: TextStyle(color: Color(0xFFDDD7CD), fontSize: 11, fontWeight: FontWeight.w700))),
-                      const Positioned(bottom: 8, child: Text('S', style: TextStyle(color: Color(0xFFDDD7CD), fontSize: 11, fontWeight: FontWeight.w700))),
-                      const Positioned(left: 10, child: Text('W', style: TextStyle(color: Color(0xFFDDD7CD), fontSize: 11, fontWeight: FontWeight.w700))),
-
-                      // Target Goal at 45° NE
-                      Transform.rotate(
-                        angle: _targetDegrees * math.pi / 180.0,
-                        child: Align(
-                          alignment: Alignment.topCenter,
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 24),
-                            child: Icon(
-                              Icons.apartment_rounded,
-                              size: 16,
-                              color: _aligned ? const Color(0xFF5D7A68) : const Color(0xFFD9CBB8).withValues(alpha: 0.6),
-                            ),
-                          ),
-                        ),
-                      ),
-
-                      // Rotating Needle
-                      Transform.rotate(
-                        angle: _currentDegrees * math.pi / 180.0,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Container(
-                              width: 5,
-                              height: 52,
-                              decoration: BoxDecoration(
-                                color: _aligned ? const Color(0xFF5D7A68) : const Color(0xFFC85A48),
-                                borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-                              ),
-                            ),
-                            Container(
-                              width: 5,
-                              height: 52,
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.4),
-                                borderRadius: const BorderRadius.vertical(bottom: Radius.circular(4)),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      // Center Pivot Pin
-                      Container(
-                        width: 14,
-                        height: 14,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Color(0xFFF7F5F0),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 12),
-        Center(
-          child: TrText(
-            _aligned
-                ? 'Skybridge Aligned! Coatless winter passage unlocked.'
-                : 'Current: ${_currentDegrees.toStringAsFixed(0)}° (Target: 45° NE)',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: _aligned ? const Color(0xFF5D7A68) : const Color(0xFFD9CBB8),
-            ),
-          ),
-        ),
-      ],
+    canvas.drawPath(path, tracePaint);
+    canvas.drawCircle(
+      Offset(size.width * 0.15, size.height * 0.2),
+      2.5,
+      dotPaint,
+    );
+    canvas.drawCircle(
+      Offset(size.width * 0.85, size.height * 0.8),
+      2.5,
+      dotPaint,
     );
   }
+
+  @override
+  bool shouldRepaint(covariant _CircuitBackingPainter oldDelegate) => false;
 }

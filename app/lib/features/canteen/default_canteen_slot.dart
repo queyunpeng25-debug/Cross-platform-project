@@ -567,25 +567,6 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
-
-              // Catchy Bottom CTA for Floating AR Puzzle Piece Hunt
-              FilledButton.icon(
-                style: FilledButton.styleFrom(
-                  backgroundColor: _forestAccent,
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size(double.infinity, 56),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                ),
-                onPressed: widget.onCatchPuzzlePiece,
-                icon: const Icon(Icons.auto_awesome_rounded),
-                label: const TrText(
-                  'Catch AR Puzzle Piece',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-                ),
-              ),
             ],
           );
         }),
