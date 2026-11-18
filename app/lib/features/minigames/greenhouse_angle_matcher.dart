@@ -1,7 +1,5 @@
-import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
-import 'dart:ui' as ui;
 
 import 'package:flutter/services.dart';
 import '../scanner/place_image_recognizer.dart';
@@ -170,6 +168,8 @@ class GreenhouseAngleMatcher {
 
   static GreenhouseAngleMatcher? _instance;
 
+  static GreenhouseAngleMatcher? get instance => _instance;
+
   /// Loads and indexes all 5 reference angle photos from assets.
   static Future<GreenhouseAngleMatcher> load() async {
     final existing = _instance;
@@ -238,7 +238,7 @@ class GreenhouseAngleMatcher {
         rotationDegrees: 0.0,
         spatialSpan: 0.0,
         structuralSimilarity: 0.0,
-        feedbackMessage: 'Posizione o immagine non corretta, riprova :( ',
+        feedbackMessage: 'Incorrect position or angle, try again :(',
       );
     }
 
@@ -324,7 +324,7 @@ class GreenhouseAngleMatcher {
       structuralSimilarity: structuralSim,
       feedbackMessage: isMatch
           ? 'Congratulations!'
-          : 'Posizione o immagine non corretta, riprova :( ',
+          : 'Incorrect position or angle, try again :(',
     );
   }
 

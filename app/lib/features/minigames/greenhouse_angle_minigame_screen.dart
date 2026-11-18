@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
@@ -5,13 +7,12 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:zenify/zenify.dart';
 
 import '../../core/controllers.dart';
 import '../scanner/live_frame_grabber.dart';
-import '../scanner/place_image_recognizer.dart';
 import 'greenhouse_angle_matcher.dart';
 
 /// Interactive "Find the Correct Angle" Minigame for the Learning Hub Greenhouse station.
@@ -31,10 +32,14 @@ class GreenhouseAngleMinigameScreen extends StatefulWidget {
     super.key,
     this.progress,
     this.initialTarget,
+    this.isDemoMode,
+    this.matcher,
   });
 
   final TourProgressController? progress;
   final GreenhouseAngleTarget? initialTarget;
+  final bool? isDemoMode;
+  final GreenhouseAngleMatcher? matcher;
 
   @override
   State<GreenhouseAngleMinigameScreen> createState() =>
@@ -44,7 +49,6 @@ class GreenhouseAngleMinigameScreen extends StatefulWidget {
 class _GreenhouseAngleMinigameScreenState
     extends State<GreenhouseAngleMinigameScreen> {
   final GlobalKey _cameraBoundaryKey = GlobalKey();
-  final ImagePicker _imagePicker = ImagePicker();
 
   MobileScannerController? _cameraController;
   GreenhouseAngleMatcher? _matcher;
@@ -65,7 +69,10 @@ class _GreenhouseAngleMinigameScreenState
     _selectTarget(widget.initialTarget);
 
     // 2. Initialize CV matcher and Camera
-    unawaited(_initMatcher());
+    _matcher = widget.matcher ?? GreenhouseAngleMatcher.instance;
+    if (_matcher == null) {
+      unawaited(_initMatcher());
+    }
     unawaited(_initCamera());
   }
 
@@ -166,27 +173,11 @@ class _GreenhouseAngleMinigameScreenState
     try {
       final matcher = _matcher ?? await GreenhouseAngleMatcher.load();
 
-      // 1. Grab raw RGBA pixels from camera preview
-      RawRgbaFrame? frame = await grabLiveCameraFrame(
+      // 1. Grab raw RGBA pixels from live camera preview
+      final frame = await grabLiveCameraFrame(
         _cameraBoundaryKey,
         maxDimension: 360,
       );
-
-      // 2. Fallback if frame grabber returns null (e.g. desktop/emulator testing)
-      if (frame == null) {
-        // If live frame grabbing is not available in the current simulator environment,
-        // we can prompt to select a photo from gallery or test against reference
-        final picked = await _imagePicker.pickImage(
-          source: ImageSource.gallery,
-          imageQuality: 90,
-          maxWidth: 960,
-          maxHeight: 960,
-        );
-        if (picked != null) {
-          final bytes = await picked.readAsBytes();
-          frame = await RawRgbaFrame.decodeEncoded(bytes, maxDimension: 360);
-        }
-      }
 
       if (frame == null) {
         if (mounted) {
@@ -200,7 +191,7 @@ class _GreenhouseAngleMinigameScreenState
               rotationDegrees: 0.0,
               spatialSpan: 0.0,
               structuralSimilarity: 0.0,
-              feedbackMessage: 'Posizione o immagine non corretta, riprova :( ',
+              feedbackMessage: 'Incorrect position or angle, try again :(',
             );
             _showResultOverlay = true;
           });
@@ -240,7 +231,7 @@ class _GreenhouseAngleMinigameScreenState
             rotationDegrees: 0.0,
             spatialSpan: 0.0,
             structuralSimilarity: 0.0,
-            feedbackMessage: 'Posizione o immagine non corretta, riprova :( ',
+            feedbackMessage: 'Incorrect position or angle, try again :(',
           );
           _showResultOverlay = true;
         });
@@ -248,68 +239,16 @@ class _GreenhouseAngleMinigameScreenState
     }
   }
 
-  Future<void> _pickPhotoFromGallery() async {
-    if (_isProcessing) return;
-    try {
-      final picked = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 92,
-        maxWidth: 960,
-        maxHeight: 960,
-      );
-      if (picked == null) return;
-
-      setState(() {
-        _isProcessing = true;
-        _showResultOverlay = false;
-      });
-
-      final bytes = await picked.readAsBytes();
-      final frame = await RawRgbaFrame.decodeEncoded(bytes, maxDimension: 360);
-      if (frame == null) {
-        setState(() {
-          _isProcessing = false;
-          _lastResult = const GreenhouseAngleMatchResult(
-            isMatch: false,
-            confidence: 0.0,
-            inliers: 0,
-            scale: 1.0,
-            rotationDegrees: 0.0,
-            spatialSpan: 0.0,
-            structuralSimilarity: 0.0,
-            feedbackMessage: 'Posizione o immagine non corretta, riprova :( ',
-          );
-          _showResultOverlay = true;
-        });
-        return;
-      }
-
-      final matcher = _matcher ?? await GreenhouseAngleMatcher.load();
-      final result = matcher.matchFrame(
-        inputFrame: frame,
-        target: _currentTarget,
-      );
-
-      if (result.isMatch) {
-        HapticFeedback.heavyImpact();
-      }
-
-      setState(() {
-        _isProcessing = false;
-        _lastResult = result;
-        _showResultOverlay = true;
-      });
-    } catch (e) {
-      debugPrint('[GreenhouseMinigame] Gallery error: $e');
-      setState(() => _isProcessing = false);
-    }
-  }
+  bool get _isDemoMode =>
+      widget.isDemoMode ??
+      (Zen.findOrNull<AppSettingsController>()?.demoUnlockAll.value ?? false);
 
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
     final topPadding = media.padding.top;
     final bottomPadding = media.padding.bottom;
+    final isDemoMode = _isDemoMode;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -384,12 +323,15 @@ class _GreenhouseAngleMinigameScreenState
                   ),
                 ),
 
-                // Reroll Target Button
-                _CircleIconButton(
-                  icon: Icons.shuffle_rounded,
-                  tooltip: 'Try Another Photo',
-                  onTap: _rerollAnotherTarget,
-                ),
+                // Reroll Target Button - Only available in Demo Mode
+                if (isDemoMode)
+                  _CircleIconButton(
+                    icon: Icons.shuffle_rounded,
+                    tooltip: 'Try Another Photo (Demo Mode)',
+                    onTap: _rerollAnotherTarget,
+                  )
+                else
+                  const SizedBox(width: 42),
               ],
             ),
           ),
@@ -500,24 +442,14 @@ class _GreenhouseAngleMinigameScreenState
             ),
           ),
 
-          // 7. Bottom Controls (Shutter Button, Photo Picker, Helper)
+          // 7. Bottom Controls (Shutter Button, Target Details Helper)
           Positioned(
             bottom: bottomPadding + 24,
             left: 0,
             right: 0,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              crossAxisAlignment: CrossAxisAlignment.center,
+            child: Stack(
+              alignment: Alignment.center,
               children: [
-                // Pick from Gallery / Test Photo
-                _CircleIconButton(
-                  icon: Icons.photo_library_outlined,
-                  size: 50,
-                  iconSize: 22,
-                  tooltip: 'Test Photo from Gallery',
-                  onTap: _pickPhotoFromGallery,
-                ),
-
                 // Center Shutter Button
                 GestureDetector(
                   onTap: _isProcessing ? null : _onShutterPressed,
@@ -565,13 +497,16 @@ class _GreenhouseAngleMinigameScreenState
                   ),
                 ),
 
-                // Info / Target Key Landmark Details
-                _CircleIconButton(
-                  icon: Icons.info_outline_rounded,
-                  size: 50,
-                  iconSize: 22,
-                  tooltip: 'View Target Details',
-                  onTap: () => setState(() => _isZoomed = true),
+                // Info / Target Key Landmark Details on the right
+                Positioned(
+                  right: 28,
+                  child: _CircleIconButton(
+                    icon: Icons.info_outline_rounded,
+                    size: 50,
+                    iconSize: 22,
+                    tooltip: 'View Target Details',
+                    onTap: () => setState(() => _isZoomed = true),
+                  ),
                 ),
               ],
             ),
@@ -995,26 +930,13 @@ class _GreenhouseAngleMinigameScreenState
             ),
             const SizedBox(height: 8),
             Text(
-              'Use the shutter button or pick a test photo from your gallery to match the perspective.',
+              'Point your camera at the target landmark and press the shutter button to match the angle.',
               style: TextStyle(
                 color: Colors.white.withOpacity(0.7),
                 fontSize: 13,
                 height: 1.35,
               ),
               textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFFF3C64F),
-                side: const BorderSide(color: Color(0xFFF3C64F)),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-              onPressed: _pickPhotoFromGallery,
-              icon: const Icon(Icons.photo_library_outlined, size: 18),
-              label: const Text('Pick Image to Test'),
             ),
           ],
         ),

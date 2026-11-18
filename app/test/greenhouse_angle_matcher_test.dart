@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:cs_building_guide/features/minigames/greenhouse_angle_matcher.dart';
 import 'package:cs_building_guide/features/scanner/place_image_recognizer.dart';
@@ -144,7 +143,7 @@ void main() {
       );
       expect(
         result.feedbackMessage,
-        'Posizione o immagine non corretta, riprova :( ',
+        'Incorrect position or angle, try again :(',
       );
     }
   });
@@ -176,7 +175,7 @@ void main() {
         );
         expect(
           result.feedbackMessage,
-          'Posizione o immagine non corretta, riprova :( ',
+          'Incorrect position or angle, try again :(',
         );
       }
     }
