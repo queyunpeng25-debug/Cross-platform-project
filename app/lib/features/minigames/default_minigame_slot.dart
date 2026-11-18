@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/controllers.dart';
 import '../../core/models.dart';
 import 'ar_tabletop_puzzle_screen.dart';
+import 'greenhouse_angle_minigame_screen.dart';
 import 'station_minigames.dart';
 
 /// Museum-styled implementation of [MinigameFeatureSlot] providing:
@@ -35,27 +36,9 @@ class DefaultMinigameFeatureSlot implements MinigameFeatureSlot {
     BuildContext context, {
     required TourProgressController progress,
   }) async {
-    final spec = progress.catalog.findById('greenhouse') ??
-        const StationSpec(
-          id: 'greenhouse',
-          title: 'Learning Hub Greenhouse',
-          subtitle: '',
-          floor: 1,
-          floorLabel: '1st Floor · Room C130a',
-          scanHintParenthetical: '',
-          triggerModeSummary: '',
-          heroAsset: 'assets/stations/greenhouse_1f.jpg',
-          paragraphs: [],
-          callouts: [],
-          owner: StationOwner.andrea,
-          normalizedX: 0.45,
-          normalizedY: 0.52,
-        );
-
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => ArStationMinigameScreen(
-          station: spec,
+        builder: (_) => GreenhouseAngleMinigameScreen(
           progress: progress,
         ),
       ),
