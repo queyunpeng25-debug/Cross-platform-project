@@ -317,6 +317,8 @@ internal class AndroidARView(
                             if (scaleFactor != null) {
                                 androidModelScaleFactor = scaleFactor.toFloat()
                             }
+                            // Dart awaits this reply before starting the AR session.
+                            result.success(null)
                         }
                         "addNode" -> {
                             val dict_node: HashMap<String, Any>? = call.arguments as? HashMap<String, Any>
@@ -588,6 +590,14 @@ internal class AndroidARView(
             pendingSessionResume = false
         } catch (e: Exception) {
             Log.e(TAG, "Error resuming session: ${e.message}")
+            isSessionResumed = false
+            activity.runOnUiThread {
+                if (!disposed) {
+                    sessionManagerChannel.invokeMethod(
+                        "onError", listOf("Unable to start AR camera: ${e.message}")
+                    )
+                }
+            }
         }
     }
 
