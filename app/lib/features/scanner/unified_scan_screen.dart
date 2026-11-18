@@ -70,7 +70,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
   DateTime _lastUnrecognizedQrAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   String _statusMessage =
-      'Point at a station QR code, or press Shutter to recognise a building sign.';
+      'Point at a station QR code and press shutter';
 
   bool get _supportsNativeArPortraits =>
       !kIsWeb &&
@@ -131,20 +131,6 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
     if (explicit != null && explicit.isNotEmpty) return explicit;
     final progress = _progressOrNull();
     return progress?.currentStationId.value ?? 'lobby';
-  }
-
-  void _toggleCatchMode(bool enabled) {
-    setState(() {
-      _isCatchMode = enabled;
-      if (enabled) {
-        _activeCatchStationId ??= _progressOrNull()?.currentStationId.value;
-        _statusMessage =
-            'Floating AR puzzle piece spotted! Press the center Shutter button to catch it.';
-      } else {
-        _statusMessage =
-            'Point at a station QR code, or press Shutter to recognise a building sign.';
-      }
-    });
   }
 
   void _triggerFlashEffect() {
@@ -322,7 +308,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
       if (sample == null || sample.trim().isEmpty) {
         setState(() {
           _statusMessage =
-              'Point at a station QR code, or press Shutter to recognise a building sign.';
+              'Point at a station QR code and press shutter';
         });
         return;
       }
@@ -581,9 +567,6 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
 
   @override
   Widget build(BuildContext context) {
-    final catalog = _catalogOrNull();
-    final progress = _progressOrNull();
-
     return Scaffold(
       backgroundColor: Colors.black,
       resizeToAvoidBottomInset: false,
@@ -755,38 +738,12 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    alignment: WrapAlignment.center,
-                    children: [
-                      if (_supportsNativeArPortraits)
-                        _ScannerModePill(
-                          onLaunchNativeAr: _launchNative3dArPortraits,
-                        ),
-                      if (progress != null)
-                        ZenObserver(() {
-                          final catchId = _effectiveCatchStationId();
-                          final spec = catalog?.findById(catchId);
-                          final stationLabel = spec?.title ?? 'Station';
-                          final collected = progress.hasCollectedPiece(catchId);
-                          return _CatchModeToggleChip(
-                            isCatchMode: _isCatchMode,
-                            stationLabel: stationLabel,
-                            alreadyCollected: collected,
-                            onToggle: () => _toggleCatchMode(!_isCatchMode),
-                          );
-                        })
-                      else
-                        _CatchModeToggleChip(
-                          isCatchMode: _isCatchMode,
-                          stationLabel: 'Station',
-                          alreadyCollected: false,
-                          onToggle: () => _toggleCatchMode(!_isCatchMode),
-                        ),
-                    ],
-                  ),
+                  if (_supportsNativeArPortraits) ...[
+                    const SizedBox(height: 12),
+                    _ScannerModePill(
+                      onLaunchNativeAr: _launchNative3dArPortraits,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -1008,81 +965,6 @@ class _ScannerModePill extends StatelessWidget {
                 ),
               ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _CatchModeToggleChip extends StatelessWidget {
-  const _CatchModeToggleChip({
-    required this.isCatchMode,
-    required this.stationLabel,
-    required this.alreadyCollected,
-    required this.onToggle,
-  });
-
-  final bool isCatchMode;
-  final String stationLabel;
-  final bool alreadyCollected;
-  final VoidCallback onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = isCatchMode
-        ? const Color(0xFFF3C64F).withValues(alpha: 0.94)
-        : Colors.black.withValues(alpha: 0.56);
-    final fg = isCatchMode ? const Color(0xFF1E2B24) : Colors.white;
-
-    return Semantics(
-      button: true,
-      selected: isCatchMode,
-      label: isCatchMode
-          ? 'Exit AR puzzle piece catch mode'
-          : 'Switch to AR puzzle piece catch mode',
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Material(
-            color: bg,
-            child: InkWell(
-              onTap: onToggle,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        alreadyCollected
-                            ? Icons.check_circle_rounded
-                            : Icons.auto_awesome_rounded,
-                        size: 16,
-                        color: fg,
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: TrText(
-                          isCatchMode
-                              ? 'AR Catch: $stationLabel'
-                              : 'Floating AR Piece',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: fg,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
           ),
         ),
       ),

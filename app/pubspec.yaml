@@ -44,3 +44,5 @@ flutter:
     - assets/computers/
     - assets/stations/
     - assets/puzzle_master.png
+    - assets/map_floor_1.jpg
+    - assets/map_floor_2.jpg

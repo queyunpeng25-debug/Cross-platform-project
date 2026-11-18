@@ -276,7 +276,7 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
   Widget build(BuildContext context) {
     final settings = Zen.findOrNull<AppSettingsController>();
     final isDemoMode = settings?.demoUnlockAll.value ?? false;
-    final showImagePickerButton = isDemoMode || kAllowRuntimeImagePicker;
+    final showImagePickerButton = isDemoMode;
 
     return Scaffold(
       backgroundColor: const Color(0xFF141312),

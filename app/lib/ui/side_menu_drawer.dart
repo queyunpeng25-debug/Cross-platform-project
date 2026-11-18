@@ -342,9 +342,7 @@ class _SoberStationRow extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 TrText(
-                  isUnlocked
-                      ? station.floorLabel
-                      : station.scanHintParenthetical,
+                  station.floorLabel,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
@@ -378,7 +376,7 @@ class _SoberStationRow extends StatelessWidget {
     if (!isUnlocked) {
       return Semantics(
         enabled: false,
-        label: '${station.title}, locked, ${station.scanHintParenthetical}',
+        label: '${station.title}, locked, ${station.floorLabel}',
         child: content,
       );
     }

@@ -365,6 +365,7 @@ final class TeamMemberProfile {
       contributionSummary:
           'Designed the cross-platform app shell, navigation & Frosted Split UI, global translation setup, Lobby guide, and CS building info stations.',
       accentColor: Color(0xFF2B2927),
+      githubUrl: 'https://github.com/GolAndrea',
     ),
     TeamMemberProfile(
       name: 'Mustafa',
