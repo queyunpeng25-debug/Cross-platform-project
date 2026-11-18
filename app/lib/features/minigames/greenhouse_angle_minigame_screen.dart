@@ -29,11 +29,11 @@ import 'greenhouse_angle_matcher.dart';
 class GreenhouseAngleMinigameScreen extends StatefulWidget {
   const GreenhouseAngleMinigameScreen({
     super.key,
-    required this.progress,
+    this.progress,
     this.initialTarget,
   });
 
-  final TourProgressController progress;
+  final TourProgressController? progress;
   final GreenhouseAngleTarget? initialTarget;
 
   @override
@@ -216,7 +216,6 @@ class _GreenhouseAngleMinigameScreenState
 
       if (result.isMatch) {
         HapticFeedback.heavyImpact();
-        widget.progress.markPuzzlePieceCollected('greenhouse');
       } else {
         HapticFeedback.lightImpact();
       }
@@ -293,7 +292,6 @@ class _GreenhouseAngleMinigameScreenState
 
       if (result.isMatch) {
         HapticFeedback.heavyImpact();
-        widget.progress.markPuzzlePieceCollected('greenhouse');
       }
 
       setState(() {
@@ -890,7 +888,7 @@ class _GreenhouseAngleMinigameScreenState
               // Detail Description
               Text(
                 isSuccess
-                    ? 'You found the exact spot and matched the perspective of ${_currentTarget.title}! The station minigame is completed.'
+                    ? 'You found the exact spot and matched the perspective of ${_currentTarget.title}!'
                     : 'The camera perspective did not match the reference landmarks. Look at the key objects in the thumbnail and try again from the right position.',
                 style: TextStyle(
                   color: Colors.white.withOpacity(0.85),
@@ -916,7 +914,7 @@ class _GreenhouseAngleMinigameScreenState
                   ),
                   onPressed: () => Navigator.of(context).pop(),
                   child: const Text(
-                    'Complete & Return to Station',
+                    'Return to Greenhouse',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
