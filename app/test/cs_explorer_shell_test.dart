@@ -1,6 +1,7 @@
 import 'package:cs_building_guide/core/controllers.dart';
 import 'package:cs_building_guide/core/models.dart';
 import 'package:cs_building_guide/core/translation_service.dart';
+import 'package:cs_building_guide/features/canteen/canteen_menu_service.dart';
 import 'package:cs_building_guide/main.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -125,6 +126,7 @@ void main() {
         CsExplorerRootApp(
           catalog: sharedCatalog,
           translationService: _InstantTranslationService(),
+          canteenMenuRepository: CanteenMenuRepository(),
           showFirstLaunchPrompt: true,
         ),
       );

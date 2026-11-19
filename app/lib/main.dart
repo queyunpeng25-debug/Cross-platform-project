@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,6 +9,7 @@ import 'content.dart';
 import 'core/controllers.dart';
 import 'core/translation_service.dart';
 import 'features/canteen/default_canteen_slot.dart';
+import 'features/canteen/canteen_menu_service.dart';
 import 'features/map/default_map_slot.dart';
 import 'features/minigames/default_minigame_slot.dart';
 import 'ui/app_shell.dart';
@@ -29,11 +32,14 @@ Future<void> main() async {
     prefs: prefs,
     nativeEnglishStrings: nativeEn,
   );
+  final canteenMenuRepository = CanteenMenuRepository();
+  unawaited(canteenMenuRepository.refresh());
 
   runApp(
     CsExplorerRootApp(
       catalog: catalog,
       translationService: translationService,
+      canteenMenuRepository: canteenMenuRepository,
       prefs: prefs,
     ),
   );
@@ -44,12 +50,14 @@ class CsExplorerRootApp extends StatefulWidget {
     super.key,
     required this.catalog,
     required this.translationService,
+    required this.canteenMenuRepository,
     this.prefs,
     this.showFirstLaunchPrompt = true,
   });
 
   final StationCatalogRepository catalog;
   final TranslationService translationService;
+  final CanteenMenuRepository canteenMenuRepository;
   final SharedPreferences? prefs;
   final bool showFirstLaunchPrompt;
 
@@ -85,7 +93,9 @@ class _CsExplorerRootAppState extends State<CsExplorerRootApp> {
       catalog: widget.catalog,
       translationService: widget.translationService,
       mapSlot: const DefaultMapFeatureSlot(),
-      canteenSlot: const DefaultCanteenFeatureSlot(),
+      canteenSlot: DefaultCanteenFeatureSlot(
+        menuRepository: widget.canteenMenuRepository,
+      ),
       minigameSlot: const DefaultMinigameFeatureSlot(),
       prefs: widget.prefs,
     ).register(Zen.rootScope);
@@ -94,6 +104,7 @@ class _CsExplorerRootAppState extends State<CsExplorerRootApp> {
   @override
   void dispose() {
     _router.dispose();
+    widget.canteenMenuRepository.dispose();
     super.dispose();
   }
 

@@ -31,7 +31,7 @@ The application covers all five required course interaction stages across **9 bu
 3. **Interactive Activities (`computers`, `greenhouse`, `canteen`):**
    - **Evolution of Computers (`2F`):** Five historic machines (*IBM PC/AT*, *NeXTstation*, *SGI O2*, *iMac G3*, and *"Moominpappa's"* *Moomin Laptop*) with a playable launch-price matching game.
    - **Learning Hub Greenhouse (`1F`):** Dedicated activity slot for the 4-object scan quest / AR plant activity.
-   - **Canteen & Campus Subway (`1F`):** Auto-translated daily lunch menu slot, student dish reviews, Kela meal subsidy tips, and Subway logo recognition.
+   - **Canteen & Campus Subway (`1F`):** The app refreshes and parses the Tietotekniikantalo lunch menu from Kanttiinit at startup on Android/iOS, with auto-translation, demo dish reviews, Kela meal subsidy tips, and Subway logo recognition. Web refresh is currently unavailable because Kanttiinit does not allow cross-origin browser requests.
 4. **Spatial AR & Multi-Modal Recognition (`portraits` + Unified Scanner):**
    - **Continuous 3D AR Portrait Recognition (Android ARCore / iOS ARKit):** Point the camera at *Kaisa Nyberg*, *Erkki Oja*, *Hans Andersin*, or *Teuvo Kohonen* to anchor real-scale `.glb` 3D biography panels beside each frame.
    - **Hybrid Camera Scanner:** Recognizes both online HTTPS QR URLs (`?station=<id>`), `cs-guide://point/<id>` markers, and building signs/door logos via the center shutter button.
