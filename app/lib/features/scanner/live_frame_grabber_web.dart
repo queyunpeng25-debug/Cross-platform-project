@@ -7,11 +7,15 @@ import 'package:flutter/widgets.dart';
 import 'place_image_recognizer.dart';
 
 @JS('document')
-external _JSDocument get _document;
+external _JSQueryRoot get _document;
 
-extension type _JSDocument._(JSObject _) implements JSObject {
+extension type _JSQueryRoot._(JSObject _) implements JSObject {
   external JSNodeList querySelectorAll(String selectors);
   external JSObject createElement(String tagName);
+}
+
+extension type _JSElementWithShadow._(JSObject _) implements JSObject {
+  external _JSQueryRoot? get shadowRoot;
 }
 
 extension type JSNodeList._(JSObject _) implements JSObject {
@@ -31,14 +35,7 @@ extension type _JSCanvasElement._(JSObject _) implements JSObject {
   external set width(int value);
   external int get height;
   external set height(int value);
-  external _JSCanvasContext2D? getContext(
-    String contextId, [
-    JSObject? options,
-  ]);
-}
-
-extension type _CanvasContextOptions._(JSObject _) implements JSObject {
-  external factory _CanvasContextOptions({bool willReadFrequently});
+  external JSObject? getContext(String contextId);
 }
 
 extension type _JSCanvasContext2D._(JSObject _) implements JSObject {
@@ -59,22 +56,47 @@ extension type _JSImageData._(JSObject _) implements JSObject {
 _JSCanvasElement? _sharedCanvas;
 _JSCanvasContext2D? _sharedCtx;
 
-Future<RawRgbaFrame?> grabPlatformCameraFrame(
-  GlobalKey repaintBoundaryKey, {
-  int maxDimension = 360,
-}) async {
-  try {
-    final videos = _document.querySelectorAll('video');
-    _JSVideoElement? activeVideo;
-    for (var i = 0; i < videos.length; i++) {
-      final node = videos.item(i);
-      if (node == null) continue;
-      final v = _JSVideoElement._(node);
-      if (v.readyState >= 2 && v.videoWidth >= 32 && v.videoHeight >= 32) {
-        activeVideo = v;
-        if (!v.paused) break;
+/// Searches both standard light DOM and open Shadow DOM roots (such as
+/// Flutter Web's `<flt-glass-pane>` / platform view hosts) for the live
+/// `<video>` element created by `MobileScannerWeb`.
+_JSVideoElement? _findActiveVideoInTree(_JSQueryRoot root, [int depth = 0]) {
+  if (depth > 6) return null;
+  final videos = root.querySelectorAll('video');
+  _JSVideoElement? fallbackVideo;
+
+  for (var i = 0; i < videos.length; i++) {
+    final node = videos.item(i);
+    if (node == null) continue;
+    final v = _JSVideoElement._(node);
+    if (v.readyState >= 2 && v.videoWidth >= 32 && v.videoHeight >= 32) {
+      if (!v.paused) return v;
+      fallbackVideo ??= v;
+    }
+  }
+
+  final allNodes = root.querySelectorAll('*');
+  for (var i = 0; i < allNodes.length; i++) {
+    final node = allNodes.item(i);
+    if (node == null) continue;
+    final shadow = _JSElementWithShadow._(node).shadowRoot;
+    if (shadow != null) {
+      final found = _findActiveVideoInTree(shadow, depth + 1);
+      if (found != null) {
+        if (!found.paused) return found;
+        fallbackVideo ??= found;
       }
     }
+  }
+
+  return fallbackVideo;
+}
+
+Future<RawRgbaFrame?> grabPlatformCameraFrame(
+  GlobalKey repaintBoundaryKey, {
+  int maxDimension = 640,
+}) async {
+  try {
+    final activeVideo = _findActiveVideoInTree(_document);
     if (activeVideo == null) return null;
 
     final vw = activeVideo.videoWidth;
@@ -89,11 +111,9 @@ Future<RawRgbaFrame?> grabPlatformCameraFrame(
     if (canvas.width != tw) canvas.width = tw;
     if (canvas.height != th) canvas.height = th;
 
-    final ctx = _sharedCtx ??= canvas.getContext(
-      '2d',
-      _CanvasContextOptions(willReadFrequently: true),
-    );
-    if (ctx == null) return null;
+    final rawCtx = canvas.getContext('2d');
+    if (rawCtx == null) return null;
+    final ctx = _sharedCtx ??= _JSCanvasContext2D._(rawCtx);
 
     ctx.drawImage(activeVideo, 0, 0, tw, th);
     final imgData = ctx.getImageData(0, 0, tw, th);

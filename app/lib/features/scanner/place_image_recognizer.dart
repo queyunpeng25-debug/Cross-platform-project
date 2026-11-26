@@ -84,7 +84,7 @@ class RawRgbaFrame {
 
   static Future<RawRgbaFrame?> decodeEncoded(
     Uint8List encodedBytes, {
-    int maxDimension = 480,
+    int maxDimension = 640,
   }) async {
     if (encodedBytes.isEmpty) return null;
     ui.Codec? codec;
@@ -173,7 +173,7 @@ class PlaceVisualMatch {
   final double structuralSimilarity;
   final String? externalUrl;
 
-  bool get isHighConfidence => confidence >= 0.72 || inliers >= 16;
+  bool get isHighConfidence => confidence >= 0.70 || inliers >= 14;
 }
 
 class _Keypoint {
@@ -237,12 +237,12 @@ class _IndexedPlaceTarget {
 /// Pure-Dart cross-platform visual place & sign recognizer (Web + Android + iOS).
 ///
 /// Combines:
-/// 1. Multi-scale spatially bucketed Harris corners + 256-bit rotation-steered
-///    binary descriptors + 2D upright similarity RANSAC geometric verification
-///    (including an automatic 2x center-viewfinder zoom pass for distant targets).
+/// 1. Multi-scale percentile-normalized Harris corners + 256-bit rotation-steered
+///    binary descriptors + symmetry-aware 2D upright similarity RANSAC across
+///    concentric viewfinder zoom levels (`1x`, `1.8x`, `3x`).
 /// 2. Multi-window 12x12 Oriented Edge HOG + white-balance-invariant Opponent
-///    Color verification for compact geometric emblems (e.g. single `'A'` sign,
-///    Subway neon logo, guild stickers, and arched mailbox).
+///    Color verification for compact geometric emblems (`TiK`, `Athene`, `[DG]`,
+///    `'A'` sign, `SCI` circle, mailbox, and `SUBWAY`).
 class PlaceImageRecognizer {
   PlaceImageRecognizer._(this._targets);
 
@@ -270,7 +270,7 @@ class PlaceImageRecognizer {
         data.offsetInBytes,
         data.lengthInBytes,
       );
-      final decoded = await RawRgbaFrame.decodeEncoded(bytes, maxDimension: 320);
+      final decoded = await RawRgbaFrame.decodeEncoded(bytes, maxDimension: 340);
       if (decoded != null) {
         indexed.add(_indexTarget(spec, decoded));
       }
@@ -284,7 +284,7 @@ class PlaceImageRecognizer {
   ) {
     return PlaceImageRecognizer._(
       entries
-          .map((entry) => _indexTarget(entry.$1, entry.$2.resizeMax(320)))
+          .map((entry) => _indexTarget(entry.$1, entry.$2.resizeMax(340)))
           .toList(growable: false),
     );
   }
@@ -294,7 +294,7 @@ class PlaceImageRecognizer {
   Future<PlaceVisualMatch?> recognizeEncodedBytes(Uint8List encodedBytes) async {
     final frame = await RawRgbaFrame.decodeEncoded(
       encodedBytes,
-      maxDimension: 480,
+      maxDimension: 640,
     );
     if (frame == null) return null;
     return recognizeRgba(frame);
@@ -305,35 +305,52 @@ class PlaceImageRecognizer {
       return null;
     }
 
-    // Pass A: Full camera frame (fast match for close & medium distance signs).
-    final passAMatch = _evaluateSingleView(inputFrame.resizeMax(300));
-    if (passAMatch != null && passAMatch.isHighConfidence) {
-      return passAMatch;
-    }
-
-    // Pass B: Automatic 2x optical zoom into the central viewfinder region when
-    // the user stands further back (e.g. across the atrium from the Greenhouse).
-    if (math.max(inputFrame.width, inputFrame.height) >= 220) {
-      final zoomedCenter = inputFrame
-          .cropNormalized(0.22, 0.20, 0.78, 0.78)
-          .resizeMax(280);
-      final passBMatch = _evaluateSingleView(zoomedCenter);
-      if (passBMatch != null) {
-        if (passAMatch == null ||
-            passBMatch.confidence > passAMatch.confidence) {
-          return passBMatch;
-        }
+    PlaceVisualMatch? bestOverall;
+    void keepBetter(PlaceVisualMatch? candidate) {
+      if (candidate == null) return;
+      if (bestOverall == null ||
+          candidate.confidence > bestOverall!.confidence) {
+        bestOverall = candidate;
       }
     }
 
-    return passAMatch;
+    // Pass 1: Full camera frame (close & medium-distance signs/doors).
+    keepBetter(_evaluateSingleView(inputFrame.resizeMax(320)));
+    if (bestOverall != null && bestOverall!.isHighConfidence) {
+      return bestOverall;
+    }
+
+    // Pass 2: Central Viewfinder crop (~1.8x optical zoom matching the rounded
+    // viewfinder box drawn on screen, accounting for 16:9 / 9:16 aspect).
+    if (math.max(inputFrame.width, inputFrame.height) >= 220) {
+      final isLandscape = inputFrame.width > inputFrame.height * 1.15;
+      final vfCrop = isLandscape
+          ? inputFrame.cropNormalized(0.22, 0.12, 0.78, 0.88)
+          : inputFrame.cropNormalized(0.14, 0.20, 0.86, 0.80);
+      keepBetter(_evaluateSingleView(vfCrop.resizeMax(300)));
+      if (bestOverall != null && bestOverall!.isHighConfidence) {
+        return bestOverall;
+      }
+    }
+
+    // Pass 3: Tight Center Zoom (~3x optical zoom for small door logos or a
+    // phone screen held in front of a wide-angle laptop webcam).
+    if (math.max(inputFrame.width, inputFrame.height) >= 360) {
+      final isLandscape = inputFrame.width > inputFrame.height * 1.15;
+      final tightCrop = isLandscape
+          ? inputFrame.cropNormalized(0.33, 0.20, 0.67, 0.80)
+          : inputFrame.cropNormalized(0.24, 0.28, 0.76, 0.72);
+      keepBetter(_evaluateSingleView(tightCrop.resizeMax(260)));
+    }
+
+    return bestOverall;
   }
 
   PlaceVisualMatch? _evaluateSingleView(RawRgbaFrame queryFrame) {
     final queryKeypoints = _extractPyramidKeypoints(
       queryFrame,
       scales: const <double>[1.0, 0.68],
-      maxPerCell: 9,
+      maxPerCell: 10,
       ignoreRects: const <List<double>>[],
     );
 
@@ -390,13 +407,13 @@ class PlaceImageRecognizer {
     if (ranked.length > 1) {
       final runnerUp = ranked[1];
       final margin = winner.confidence - runnerUp.confidence;
-      if (winner.inliers < 15 && margin < 0.06) {
+      if (winner.inliers < 14 && margin < 0.055) {
         return null;
       }
-      if (winner.inliers >= 15 &&
-          runnerUp.inliers >= 15 &&
-          winner.inliers < (runnerUp.inliers * 1.20).round() &&
-          margin < 0.045) {
+      if (winner.inliers >= 14 &&
+          runnerUp.inliers >= 14 &&
+          winner.inliers < (runnerUp.inliers * 1.18).round() &&
+          margin < 0.04) {
         return null;
       }
     }
@@ -410,8 +427,8 @@ class PlaceImageRecognizer {
   ) {
     final keypoints = _extractPyramidKeypoints(
       frame,
-      scales: const <double>[1.0, 0.68, 0.46],
-      maxPerCell: 10,
+      scales: const <double>[1.0, 0.70, 0.49, 0.34],
+      maxPerCell: 11,
       ignoreRects: spec.ignoreRects,
     );
     final structural = _computeStructuralDescriptor(frame);
@@ -430,30 +447,33 @@ class PlaceImageRecognizer {
     required double edgeSim,
     required double combinedSim,
   }) {
-    // 1. Geometric RANSAC score (8+ spatially distributed similarity inliers)
+    // 1. Geometric RANSAC score:
+    // - 12+ spatially distributed similarity inliers are self-confirming.
+    // - Borderline 8..11 inliers also require coarse structural sanity (>= 0.38)
+    //   so unrelated clutter (sim ~ 0.20) never triggers a false match.
     var ransacScore = 0.0;
-    if (inliers >= 8) {
-      ransacScore = (0.55 + (inliers - 8) * 0.034).clamp(0.0, 0.98);
-      if (combinedSim >= 0.50) {
-        ransacScore = (ransacScore + (combinedSim - 0.50) * 0.22).clamp(
+    if (inliers >= 12 || (inliers >= 8 && combinedSim >= 0.38)) {
+      ransacScore = (0.56 + (inliers - 8) * 0.035).clamp(0.0, 0.98);
+      if (combinedSim >= 0.48) {
+        ransacScore = (ransacScore + (combinedSim - 0.48) * 0.22).clamp(
           0.0,
           0.99,
         );
       }
-    } else if (inliers >= 5 && edgeSim >= 0.60 && combinedSim >= 0.63) {
-      ransacScore = (0.54 + (inliers - 5) * 0.05 + (combinedSim - 0.60) * 0.55)
+    } else if (inliers >= 5 && edgeSim >= 0.58 && combinedSim >= 0.60) {
+      ransacScore = (0.55 + (inliers - 5) * 0.05 + (combinedSim - 0.58) * 0.55)
           .clamp(0.0, 0.93);
     }
 
     // 2. Structural Edge + Appearance emblem score (requires genuine geometric
-    // edge alignment >= 0.755 so uniform lighting/color never false-triggers).
+    // edge alignment >= 0.745 so uniform lighting/color never false-triggers).
     var emblemScore = 0.0;
-    final minEdge = target.spec.isCompactEmblem ? 0.750 : 0.795;
-    final minCombined = target.spec.isCompactEmblem ? 0.770 : 0.810;
+    final minEdge = target.spec.isCompactEmblem ? 0.745 : 0.795;
+    final minCombined = target.spec.isCompactEmblem ? 0.760 : 0.810;
     if (edgeSim >= minEdge && combinedSim >= minCombined) {
       emblemScore = (0.58 + (combinedSim - minCombined) * 2.1).clamp(0.0, 0.95);
       if (inliers >= 3) {
-        emblemScore = (emblemScore + inliers * 0.02).clamp(0.0, 0.98);
+        emblemScore = (emblemScore + inliers * 0.022).clamp(0.0, 0.98);
       }
     }
 
@@ -461,7 +481,7 @@ class PlaceImageRecognizer {
   }
 
   // ---------------------------------------------------------------------------
-  // Stage 1: Multi-Scale Salient Keypoints + 256-bit Steered BRIEF + RANSAC
+  // Stage 1: Multi-Scale Contrast-Normalized Keypoints + Steered BRIEF + RANSAC
   // ---------------------------------------------------------------------------
 
   static const int _angleBins = 32;
@@ -539,7 +559,7 @@ class PlaceImageRecognizer {
     for (final scale in scales) {
       final w = (baseFrame.width * scale).round();
       final h = (baseFrame.height * scale).round();
-      if (w < _borderMargin * 2 + 10 || h < _borderMargin * 2 + 10) continue;
+      if (w < _borderMargin * 2 + 8 || h < _borderMargin * 2 + 8) continue;
       final levelFrame = scale == 1.0 ? baseFrame : baseFrame.resizeExact(w, h);
       all.addAll(
         _extractLevelKeypoints(
@@ -561,15 +581,47 @@ class PlaceImageRecognizer {
   }) {
     final w = frame.width;
     final h = frame.height;
+    final totalPx = w * h;
     final rgba = frame.rgba;
 
-    final rawGray = Uint8List(w * h);
-    for (var i = 0, p = 0; i < w * h; i++, p += 4) {
-      rawGray[i] =
-          (rgba[p] * 77 + rgba[p + 1] * 150 + rgba[p + 2] * 29) >> 8;
+    final rawGray = Uint8List(totalPx);
+    final hist = Int32List(256);
+    for (var i = 0, p = 0; i < totalPx; i++, p += 4) {
+      final l = (rgba[p] * 77 + rgba[p + 1] * 150 + rgba[p + 2] * 29) >> 8;
+      rawGray[i] = l;
+      hist[l]++;
     }
 
-    final tmp = Uint16List(w * h);
+    // 3%..97% percentile contrast normalization so dim hallways or washed-out
+    // screen-glare webcam captures produce strong, consistent gradients.
+    final pLowTarget = (totalPx * 0.03).round();
+    final pHighTarget = (totalPx * 0.97).round();
+    var cum = 0;
+    var lo = 0;
+    for (var v = 0; v < 256; v++) {
+      cum += hist[v];
+      if (cum >= pLowTarget) {
+        lo = v;
+        break;
+      }
+    }
+    cum = 0;
+    var hi = 255;
+    for (var v = 0; v < 256; v++) {
+      cum += hist[v];
+      if (cum >= pHighTarget) {
+        hi = v;
+        break;
+      }
+    }
+    if (hi - lo >= 28 && (lo > 12 || hi < 242)) {
+      final span = hi - lo;
+      for (var i = 0; i < totalPx; i++) {
+        rawGray[i] = (((rawGray[i] - lo) * 255) ~/ span).clamp(0, 255);
+      }
+    }
+
+    final tmp = Uint16List(totalPx);
     for (var y = 0; y < h; y++) {
       final row = y * w;
       tmp[row] = rawGray[row] << 2;
@@ -580,7 +632,7 @@ class PlaceImageRecognizer {
       tmp[row + w - 1] = rawGray[row + w - 1] << 2;
     }
 
-    final smooth = Uint8List(w * h);
+    final smooth = Uint8List(totalPx);
     for (var x = 0; x < w; x++) {
       smooth[x] = tmp[x] >> 2;
       smooth[(h - 1) * w + x] = tmp[(h - 1) * w + x] >> 2;
@@ -593,8 +645,8 @@ class PlaceImageRecognizer {
       }
     }
 
-    final gx = Int16List(w * h);
-    final gy = Int16List(w * h);
+    final gx = Int16List(totalPx);
+    final gy = Int16List(totalPx);
     for (var y = 1; y < h - 1; y++) {
       final r0 = (y - 1) * w;
       final r1 = y * w;
@@ -614,7 +666,7 @@ class PlaceImageRecognizer {
       }
     }
 
-    final scores = Float32List(w * h);
+    final scores = Float32List(totalPx);
     for (var y = _borderMargin; y < h - _borderMargin; y++) {
       final ny = y / h;
       final row = y * w;
@@ -643,10 +695,10 @@ class PlaceImageRecognizer {
           }
         }
         final trace = sxx + syy;
-        if (trace < 2800.0) continue;
+        if (trace < 2200.0) continue;
         final det = sxx * syy - sxy * sxy;
         final resp = det - 0.045 * trace * trace;
-        if (resp > 500000.0) {
+        if (resp > 320000.0) {
           scores[row + x] = resp;
         }
       }
@@ -771,9 +823,10 @@ class PlaceImageRecognizer {
 
     final rawMatches = <_PutativeMatch>[];
     for (final q in queryKeypoints) {
-      var bestDist = 88;
-      var secondDist = 88;
+      var bestDist = 92;
+      var secondDist = 92;
       _Keypoint? bestRef;
+      _Keypoint? secondRef;
 
       for (final r in refKeypoints) {
         final d = _hamming256Bounded(q.descriptor, r.descriptor, secondDist);
@@ -781,6 +834,7 @@ class PlaceImageRecognizer {
           if (bestRef != null &&
               ((bestRef.x - r.x).abs() + (bestRef.y - r.y).abs()) > 7.0) {
             secondDist = bestDist;
+            secondRef = bestRef;
           }
           bestDist = d;
           bestRef = r;
@@ -788,15 +842,25 @@ class PlaceImageRecognizer {
             bestRef != null &&
             ((bestRef.x - r.x).abs() + (bestRef.y - r.y).abs()) > 7.0) {
           secondDist = d;
+          secondRef = r;
         }
       }
 
+      // Symmetry-aware acceptance: logos with repeating gear teeth (`TiK`, `DG`)
+      // or repeated letters (`DATABASE`) legitimately have two strong matches
+      // inside the same target (`bestDist ~ 34, secondDist ~ 37`). Keep strong
+      // matches (`<= 56`) unconditionally and let 2D RANSAC pick the rigid pose!
       if (bestRef != null &&
-          bestDist <= 70 &&
-          bestDist * 100 <= secondDist * 84) {
+          (bestDist <= 56 ||
+              (bestDist <= 74 && bestDist * 100 <= secondDist * 88))) {
         rawMatches.add(
           _PutativeMatch(query: q, ref: bestRef, distance: bestDist),
         );
+        if (secondRef != null && secondDist <= 50) {
+          rawMatches.add(
+            _PutativeMatch(query: q, ref: secondRef, distance: secondDist),
+          );
+        }
       }
     }
 
@@ -805,48 +869,53 @@ class PlaceImageRecognizer {
     rawMatches.sort((a, b) => a.distance.compareTo(b.distance));
     final dedup = <_PutativeMatch>[];
     for (final m in rawMatches) {
-      final duplicateRef = dedup.any(
-        (existing) =>
-            (existing.ref.x - m.ref.x).abs() < 4.0 &&
-            (existing.ref.y - m.ref.y).abs() < 4.0,
-      );
-      if (!duplicateRef) {
+      var refUseCount = 0;
+      for (final existing in dedup) {
+        if ((existing.ref.x - m.ref.x).abs() < 4.0 &&
+            (existing.ref.y - m.ref.y).abs() < 4.0) {
+          refUseCount++;
+          if (refUseCount >= 2) break;
+        }
+      }
+      if (refUseCount < 2) {
         dedup.add(m);
-        if (dedup.length >= 84) break;
+        if (dedup.length >= 110) break;
       }
     }
 
     if (dedup.length < 5) return 0;
 
     final n = dedup.length;
-    final reprojTol = math.max(9.0, 0.05 * math.max(queryWidth, queryHeight));
+    final reprojTol = math.max(9.5, 0.054 * math.max(queryWidth, queryHeight));
     final reprojTol2 = reprojTol * reprojTol;
-    const maxRotationRad = 0.68; // ~39 deg upright camera constraint
+    const maxRotationRad = 0.78; // ~45 deg camera tilt tolerance
 
     var bestInliers = 0;
-    final sampleCount = math.min(n, 38);
+    final sampleCount = math.min(n, 44);
     var iterations = 0;
 
-    for (var i = 0; i < sampleCount && iterations < 120; i++) {
+    for (var i = 0; i < sampleCount && iterations < 150; i++) {
       final m1 = dedup[i];
-      for (var j = i + 1; j < sampleCount && iterations < 120; j += 2) {
+      for (var j = i + 1; j < sampleCount && iterations < 150; j++) {
         final m2 = dedup[j];
+        if (identical(m1.query, m2.query)) continue;
+
         final rdx = m2.ref.x - m1.ref.x;
         final rdy = m2.ref.y - m1.ref.y;
         final rDist2 = rdx * rdx + rdy * rdy;
-        if (rDist2 < 169.0) continue;
+        if (rDist2 < 144.0) continue;
 
         final qdx = m2.query.x - m1.query.x;
         final qdy = m2.query.y - m1.query.y;
         final qDist2 = qdx * qdx + qdy * qdy;
-        if (qDist2 < 100.0) continue;
+        if (qDist2 < 81.0) continue;
 
         iterations++;
 
         final a = (rdx * qdx + rdy * qdy) / rDist2;
         final b = (rdx * qdy - rdy * qdx) / rDist2;
         final scale = math.sqrt(a * a + b * b);
-        if (scale < 0.14 || scale > 4.2) continue;
+        if (scale < 0.12 || scale > 4.6) continue;
 
         final rotAngle = math.atan2(b, a);
         if (rotAngle.abs() > maxRotationRad) continue;
@@ -856,12 +925,17 @@ class PlaceImageRecognizer {
         final tx = m1.query.x - (a * m1.ref.x - b * m1.ref.y);
         final ty = m1.query.y - (b * m1.ref.x + a * m1.ref.y);
 
+        // Count at most one inlier per distinct query keypoint & ref patch.
         var count = 0;
         var minRx = double.infinity, maxRx = -double.infinity;
         var minRy = double.infinity, maxRy = -double.infinity;
+        final usedQuery = <int>{};
 
         for (var k = 0; k < n; k++) {
           final mk = dedup[k];
+          final qKey = (mk.query.x.round() << 16) ^ mk.query.y.round();
+          if (usedQuery.contains(qKey)) continue;
+
           final px = a * mk.ref.x - b * mk.ref.y + tx;
           final py = b * mk.ref.x + a * mk.ref.y + ty;
           final ex = px - mk.query.x;
@@ -870,8 +944,9 @@ class PlaceImageRecognizer {
 
           final expectedBin =
               (mk.ref.angleBin + rotBins + _angleBins) % _angleBins;
-          if (_angleBinDistance(expectedBin, mk.query.angleBin) > 5) continue;
+          if (_angleBinDistance(expectedBin, mk.query.angleBin) > 6) continue;
 
+          usedQuery.add(qKey);
           count++;
           if (mk.ref.x < minRx) minRx = mk.ref.x;
           if (mk.ref.x > maxRx) maxRx = mk.ref.x;
@@ -1013,17 +1088,16 @@ class PlaceImageRecognizer {
       windows.add(desc);
     }
 
-    // 10 strategic crops covering full frame, central viewfinder, horizontal
-    // sign band, and key quadrants/corners:
+    // Full frame + concentric square/aspect-neutral center crops + sign bands:
     addCrop(0.0, 0.0, 1.0, 1.0);
     addCrop(0.06, 0.05, 0.94, 0.92);
-    addCrop(0.16, 0.18, 0.84, 0.82);
+    addCrop(0.16, 0.16, 0.84, 0.84);
+    addCrop(0.24, 0.22, 0.76, 0.78);
     addCrop(0.32, 0.28, 0.75, 0.69); // Mid-distance atrium center
     addCrop(0.04, 0.26, 0.96, 0.60); // Wide horizontal sign band (Subway)
     addCrop(0.30, 0.25, 0.86, 0.55); // Off-center wide sign band
     addCrop(0.0, 0.22, 0.56, 0.76);
     addCrop(0.44, 0.22, 1.0, 0.76);
-    addCrop(0.22, 0.24, 0.78, 0.76);
     addCrop(0.70, 0.02, 0.99, 0.30); // Top-right plaque zone ('A' sign)
     addCrop(0.18, 0.28, 0.56, 0.58); // Left-door badge zone ('SCI' circle)
 
@@ -1050,14 +1124,11 @@ class PlaceImageRecognizer {
         final g = rgba[p + 1];
         final b = rgba[p + 2];
 
-        // Backlit yellow 'SUB': high R & G, much lower B
         if (r >= 185 && g >= 170 && b <= 95 && (r - g).abs() <= 55) {
           yellowCount++;
           yellowSumX += x;
           yellowSumY += y;
-        }
-        // Backlit emerald 'WAY': vivid green channel dominating R
-        else if (g >= 175 && (g - r) >= 65 && b <= 165 && g >= b + 20) {
+        } else if (g >= 175 && (g - r) >= 65 && b <= 165 && g >= b + 20) {
           greenCount++;
           greenSumX += x;
           greenSumY += y;
@@ -1075,7 +1146,6 @@ class PlaceImageRecognizer {
       return 0.0;
     }
 
-    // Balanced proportions between 'SUB' and 'WAY'
     final balance = math.min(yellowCount, greenCount) /
         math.max(yellowCount, greenCount);
     if (balance < 0.25) return 0.0;
@@ -1088,8 +1158,6 @@ class PlaceImageRecognizer {
     final dx = (gCx - yCx) / w;
     final dy = (gCy - yCy).abs() / h;
 
-    // 'WAY' (green) must sit immediately to the right of 'SUB' (yellow) on
-    // roughly the same horizontal baseline.
     if (dx < 0.05 || dx > 0.58 || dy > 0.16) return 0.0;
 
     return (0.74 + balance * 0.16).clamp(0.0, 0.90);

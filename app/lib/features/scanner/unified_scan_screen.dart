@@ -355,7 +355,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
     try {
       final frame = await grabLiveCameraFrame(
         _cameraPreviewBoundaryKey,
-        maxDimension: 340,
+        maxDimension: 640,
       );
       if (!mounted || frame == null || _isCatchMode || _shutterBusy) return;
 
@@ -473,32 +473,77 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
       final recognizer = await _ensurePlaceRecognizer();
       if (!mounted || token != _shutterRequestId) return;
 
-      if (recognizer != null) {
-        final liveFrame = await grabLiveCameraFrame(
-          _cameraPreviewBoundaryKey,
-          maxDimension: 400,
-        );
-        if (!mounted || token != _shutterRequestId) return;
+      final liveFrame = recognizer != null
+          ? await grabLiveCameraFrame(
+              _cameraPreviewBoundaryKey,
+              maxDimension: 680,
+            )
+          : null;
+      if (!mounted || token != _shutterRequestId) return;
 
-        if (liveFrame != null) {
-          final match = recognizer.recognizeRgba(liveFrame);
-          if (match != null) {
-            _lastVisualMatchedAt = DateTime.now();
-            await _applyVisualPlaceMatch(match);
+      if (recognizer != null && liveFrame != null) {
+        final match = recognizer.recognizeRgba(liveFrame);
+        if (match != null) {
+          _lastVisualMatchedAt = DateTime.now();
+          await _applyVisualPlaceMatch(match);
+          return;
+        }
+
+        // Camera IS active, so do not pop up a manual menu on non-matching shots:
+        // keep real camera behavior and point to (i) only if fallback is needed.
+        setState(() {
+          _statusMessage =
+              'No match in ${liveFrame.width}×${liveFrame.height} frame — center the logo/sign inside the box and press Shutter again.';
+        });
+        return;
+      }
+
+      // On Android/iOS devices where SurfaceProducer blocks GPU texture readback,
+      // capture a real hardware camera frame via ImagePicker.
+      if (!kIsWeb && recognizer != null) {
+        try {
+          setState(() => _cameraSuspendedForNativeAr = true);
+          await WidgetsBinding.instance.endOfFrame;
+          final shot = await _imagePicker.pickImage(
+            source: ImageSource.camera,
+            maxWidth: 1080,
+            maxHeight: 1080,
+          );
+          if (mounted) {
+            setState(() => _cameraSuspendedForNativeAr = false);
+          }
+          if (shot != null && mounted && token == _shutterRequestId) {
+            final bytes = await shot.readAsBytes();
+            final match = await recognizer.recognizeEncodedBytes(bytes);
+            if (!mounted || token != _shutterRequestId) return;
+            if (match != null) {
+              _lastVisualMatchedAt = DateTime.now();
+              await _applyVisualPlaceMatch(match);
+              return;
+            }
+            setState(() {
+              _statusMessage =
+                  'No registered place matched — move closer to the sign/logo and try again.';
+            });
             return;
+          }
+        } catch (_) {
+          if (mounted) {
+            setState(() => _cameraSuspendedForNativeAr = false);
           }
         }
       }
 
+      // Only open the fallback/photo sheet when no live camera stream is available.
       setState(() {
         _statusMessage =
-            'Move closer to the door/logo and press Shutter — or pick a photo / sign below.';
+            'Live camera frame unavailable — upload a photo or use demo fallback below.';
       });
 
       final sample = await _showVisualRecognitionSheet(
-        title: 'Place & Sign Recognition',
+        title: 'Camera Unavailable · Photo & Demo Scan',
         subtitle:
-            'Move closer to the Greenhouse, Guild logo, Wing A door, SCI / Maarintie 8 door, or Subway sign — or scan from a photo / confirm below:',
+            'Upload a photo to run real visual recognition, or use a demo preset when testing without a camera:',
       );
 
       if (!mounted || token != _shutterRequestId) return;
