@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zenify/zenify.dart';
+import 'package:cs_building_guide/features/canteen/canteen_menu_service.dart';
 
 class _InstantTranslationService implements TranslationService {
   @override
@@ -100,6 +101,7 @@ void main() {
         CsExplorerRootApp(
           catalog: sharedCatalog,
           translationService: _InstantTranslationService(),
+          canteenMenuRepository: CanteenMenuRepository(),
           showFirstLaunchPrompt: false,
         ),
       );
@@ -285,6 +287,7 @@ void main() {
           CsExplorerRootApp(
             catalog: sharedCatalog,
             translationService: _InstantTranslationService(),
+            canteenMenuRepository: CanteenMenuRepository(),
             showFirstLaunchPrompt: false,
           ),
         );
@@ -334,6 +337,7 @@ void main() {
           CsExplorerRootApp(
             catalog: sharedCatalog,
             translationService: _InstantTranslationService(),
+            canteenMenuRepository: CanteenMenuRepository(),
             showFirstLaunchPrompt: false,
           ),
         );
