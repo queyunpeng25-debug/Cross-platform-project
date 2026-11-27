@@ -175,6 +175,27 @@ void main() {
       final atStation = resolveUserMapPosition(progress: progress, store: store);
       expect((atStation as StationUserPosition).station.id, 'computers');
     });
+
+    test('scanning lobby QR clears an earlier map marker scanned while at lobby', () async {
+      final prefs = await SharedPreferences.getInstance();
+      final progress = TourProgressController(catalog: catalog, prefs: prefs);
+      final store = MapPositionStore(prefs);
+
+      store.setMarker(
+        'accessible_entrance_1f',
+        stationAtScan: progress.currentStationId.value,
+      );
+      final atEntrance = resolveUserMapPosition(progress: progress, store: store);
+      expect((atEntrance as MarkerUserPosition).place.id, 'accessible_entrance_1f');
+
+      // Scanning online_lobby (?station=lobby) while currentStationId is 'lobby'
+      // must clear the map marker and return You are here to CS Building Lobby.
+      progress.unlockAndSetCurrentStation('lobby');
+      final atLobby = resolveUserMapPosition(progress: progress, store: store);
+      expect(atLobby, isA<StationUserPosition>());
+      expect((atLobby as StationUserPosition).station.id, 'lobby');
+      expect(store.markerId, isNull);
+    });
   });
 
   group('Map screen', () {
@@ -251,21 +272,46 @@ void main() {
     testWidgets('locked stations explain how to unlock them', (tester) async {
       await pumpMap(tester);
 
+      await tester.tap(find.byTooltip('Show whole floor'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
       await tester.tap(_stationPin('Greenhouse'));
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
 
       expect(find.text('Learning Hub Greenhouse'), findsOneWidget);
       expect(find.text('Locked'), findsOneWidget);
+      expect(
+        find.text('Scan the marker on site to unlock this station'),
+        findsOneWidget,
+      );
       expect(find.text('Scan a QR code'), findsOneWidget);
       expect(find.text('Open guide'), findsNothing);
       expect(find.text('Puzzle piece hidden here'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Close'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.tap(_stationPin('Portraits'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(
+        find.text(
+          'Scan the marker on site to unlock this station (point AR camera at a 1F portrait)',
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('demo mode lets the details card open the station guide', (tester) async {
       String? opened;
       await pumpMap(tester, demo: true, onOpenStation: (id) => opened = id);
 
+      await tester.tap(find.byTooltip('Show whole floor'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
       await tester.tap(_stationPin('Greenhouse'));
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
       await tester.tap(find.text('Open guide'));
       await tester.pump();

@@ -64,6 +64,7 @@ class MapPlace {
 /// Visual role of a drawn area on a floor plan.
 enum MapZoneKind {
   lobby,
+  greenhouse,
   restaurant,
   corridor,
   entranceHall,

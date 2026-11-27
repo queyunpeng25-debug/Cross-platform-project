@@ -154,14 +154,25 @@ abstract final class CsBuildingMapData {
       labelAt: Offset(61, 41.4),
     ),
     MapZone(
-      kind: MapZoneKind.restaurant,
+      kind: MapZoneKind.greenhouse,
       floor: 1,
       points: [
         Offset(20.2, 18.0), Offset(46.4, 21.7), Offset(46.4, 43.0), //
         Offset(20.2, 43.0), //
       ],
-      label: 'Restaurant & Subway',
+      label: 'Greenhouse',
       labelAt: Offset(33, 38.5),
+      minPxPerMetreForLabel: 4.5,
+    ),
+    MapZone(
+      kind: MapZoneKind.restaurant,
+      floor: 1,
+      points: [
+        Offset(50.6, 22.0), Offset(68.0, 24.4), Offset(68.0, 35.8), //
+        Offset(50.6, 35.8), //
+      ],
+      label: 'Restaurant & Subway',
+      labelAt: Offset(59.3, 33.8),
       minPxPerMetreForLabel: 4.5,
     ),
     MapZone(
@@ -525,7 +536,7 @@ abstract final class CsBuildingMapData {
       icon: Icons.flag_rounded,
     ),
     'greenhouse': StationMapPlacement(
-      position: Offset(57.5, 27.0),
+      position: Offset(30.0, 29.0),
       shortLabel: 'Greenhouse',
       icon: Icons.local_florist_rounded,
     ),
@@ -540,7 +551,7 @@ abstract final class CsBuildingMapData {
       icon: Icons.portrait_rounded,
     ),
     'canteen': StationMapPlacement(
-      position: Offset(30.0, 29.0),
+      position: Offset(57.5, 27.0),
       shortLabel: 'Lunch & Subway',
       icon: Icons.restaurant_rounded,
     ),

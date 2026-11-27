@@ -360,6 +360,54 @@ void main() {
   );
 
   testWidgets(
+    'Bottom dock stays visible on station detail, settings, and team screens',
+    (tester) async {
+      DeviceCapabilities.debugExperienceOverride = DeviceExperience.nativeMobile;
+      tester.view.physicalSize = const Size(430, 932);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        CsExplorerRootApp(
+          catalog: sharedCatalog,
+          translationService: _InstantTranslationService(),
+          canteenMenuRepository: CanteenMenuRepository(),
+          showFirstLaunchPrompt: false,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final progress = Zen.find<TourProgressController>();
+      progress.unlockAndSetCurrentStation('greenhouse');
+      await tester.pump();
+
+      // Open Greenhouse station detail via drawer.
+      await tester.tap(find.text('Guide'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Learning Hub Greenhouse'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Play Greenhouse Activity'), findsOneWidget);
+      expect(find.text('Infos'), findsOneWidget);
+      expect(find.text('Scan'), findsOneWidget);
+      expect(find.text('Map'), findsOneWidget);
+
+      // Open Settings via drawer -> dock remains visible.
+      await tester.tap(find.bySemanticsLabel('Open building stations menu'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Settings'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('App & Menu Language'), findsOneWidget);
+      expect(find.text('Infos'), findsOneWidget);
+      expect(find.text('Scan'), findsOneWidget);
+      expect(find.text('Map'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'ArTabletopPuzzleScreen omits uninitialized Native AR Plane toggle and ComputerPriceGame omits Preview disclaimer',
     (tester) async {
       final progress = TourProgressController(catalog: sharedCatalog);

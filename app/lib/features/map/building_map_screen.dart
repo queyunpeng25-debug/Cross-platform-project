@@ -113,6 +113,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
 
   bool _isWide = false;
   bool _initialCameraApplied = false;
+  String? _lastUserPositionKey;
   Size _viewport = Size.zero;
   PlanProjection? _projection;
 
@@ -122,12 +123,21 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
   bool get _supportsArExperiences => DeviceCapabilities.supportsArExperiences;
   bool get _autoUnlockStations => DeviceCapabilities.autoUnlockStations;
 
+  static String? _positionKey(UserMapPosition? position) => switch (position) {
+    MarkerUserPosition(:final place) => 'marker:${place.id}',
+    StationUserPosition(:final station) => 'station:${station.id}',
+    null => null,
+  };
+
   @override
   void initState() {
     super.initState();
-    _floor =
-        resolveUserMapPosition(progress: _progress, store: _store)?.floor ??
-        CsBuildingMapData.floors.first;
+    final initialPosition = resolveUserMapPosition(
+      progress: _progress,
+      store: _store,
+    );
+    _lastUserPositionKey = _positionKey(initialPosition);
+    _floor = initialPosition?.floor ?? CsBuildingMapData.floors.first;
   }
 
   @override
@@ -312,6 +322,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
         // visitor is there, so it is unlocked and becomes the Red station.
         _progress.unlockAndSetCurrentStation(station.id);
         _store.clear();
+        _lastUserPositionKey = 'station:${station.id}';
         setState(() {
           _floor = CsBuildingMapData.floorFor(station);
           _selection = _Selection.station(station.id);
@@ -324,6 +335,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
   }
 
   void _setMarkerPosition(MapPlace place) {
+    _lastUserPositionKey = 'marker:${place.id}';
     _store.setMarker(place.id, stationAtScan: _progress.currentStationId.value);
     setState(() {
       _floor = place.floor;
@@ -393,11 +405,21 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
           final currentStationId = _progress.currentStationId.value;
           final visitedCount = _progress.visitedStationIds.value.length;
           final collectedCount = _progress.collectedPuzzleIds.value.length;
+          final _ = _progress.mapMarkerRevision.value;
           final demoUnlock = widget.settings.demoUnlockAll.value;
           final position = resolveUserMapPosition(
             progress: _progress,
             store: _store,
           );
+          final posKey = _positionKey(position);
+          if (posKey != null && posKey != _lastUserPositionKey) {
+            _lastUserPositionKey = posKey;
+            if (position != null) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _showUser(position);
+              });
+            }
+          }
           final snapshot = _MapSnapshot(
             position: position,
             demoUnlock: demoUnlock,
@@ -1207,7 +1229,9 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
               const SizedBox(width: 8),
               Expanded(
                 child: TrText(
-                  'Scan the marker on site to unlock this station ${station.scanHintParenthetical}',
+                  station.scanHintParenthetical.trim().isEmpty
+                      ? 'Scan the marker on site to unlock this station'
+                      : 'Scan the marker on site to unlock this station ${station.scanHintParenthetical.trim()}',
                   style: theme.textTheme.bodySmall,
                 ),
               ),

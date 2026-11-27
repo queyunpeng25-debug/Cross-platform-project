@@ -141,7 +141,7 @@ class StationSpec {
       subtitle: json['subtitle'] as String,
       floor: (json['floor'] as num).toInt(),
       floorLabel: json['floorLabel'] as String,
-      scanHintParenthetical: json['scanHintParenthetical'] as String,
+      scanHintParenthetical: json['scanHintParenthetical'] as String? ?? '',
       triggerModeSummary: json['triggerModeSummary'] as String? ?? '',
       heroAsset: json['heroAsset'] as String,
       paragraphs: (json['paragraphs'] as List<dynamic>).cast<String>(),

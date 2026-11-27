@@ -371,13 +371,15 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
 
           // 3. Center Tabletop Anchored 3x3 Sliding Tile Board
           Center(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final shortest = math.min(
-                  constraints.maxWidth - 40,
-                  constraints.maxHeight - 230,
-                );
-                final boardSize = shortest.clamp(240.0, 360.0);
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 72),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final shortest = math.min(
+                    constraints.maxWidth - 40,
+                    constraints.maxHeight - 240,
+                  );
+                  final boardSize = shortest.clamp(200.0, 340.0);
                 final tileSize = boardSize / _gridSize;
 
                 final matrix = Matrix4.identity();
@@ -493,13 +495,14 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
                 );
               },
             ),
+            ),
           ),
 
           // 4. Bottom Controls & Instructions
           Positioned(
             left: 16,
             right: 16,
-            bottom: 16,
+            bottom: 100,
             child: SafeArea(
               top: false,
               child: ClipRRect(

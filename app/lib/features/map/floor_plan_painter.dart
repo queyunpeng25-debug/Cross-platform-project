@@ -61,6 +61,7 @@ class MapPalette {
     required this.interiorLine,
     required this.corridor,
     required this.lobby,
+    required this.greenhouse,
     required this.restaurant,
     required this.classroom,
     required this.voidFill,
@@ -96,7 +97,8 @@ class MapPalette {
       interiorLine: ink.withValues(alpha: 0.16),
       corridor: dark ? const Color(0xFF34322F) : const Color(0xFFF7F5F0),
       lobby: dark ? const Color(0xFF3B342B) : const Color(0xFFF5ECDD),
-      restaurant: dark ? const Color(0xFF2D352C) : const Color(0xFFE9F0E6),
+      greenhouse: dark ? const Color(0xFF2D352C) : const Color(0xFFE9F0E6),
+      restaurant: dark ? const Color(0xFF3D2F27) : const Color(0xFFF3E2D5),
       classroom: dark ? const Color(0xFF2A313A) : const Color(0xFFE8EEF4),
       voidFill: dark ? const Color(0xFF1E1D1C) : const Color(0xFFECE8E0),
       hatch: ink.withValues(alpha: dark ? 0.14 : 0.10),
@@ -118,6 +120,7 @@ class MapPalette {
   final Color interiorLine;
   final Color corridor;
   final Color lobby;
+  final Color greenhouse;
   final Color restaurant;
   final Color classroom;
   final Color voidFill;
@@ -157,13 +160,14 @@ class FloorPlanPainter extends CustomPainter {
     MapZoneKind.parking: 2,
     MapZoneKind.lockedWing: 10,
     MapZoneKind.classroom: 11,
-    MapZoneKind.restaurant: 12,
+    MapZoneKind.greenhouse: 12,
     MapZoneKind.lobby: 13,
-    MapZoneKind.entranceHall: 14,
-    MapZoneKind.corridor: 15,
-    MapZoneKind.studyLoft: 16,
-    MapZoneKind.atriumVoid: 17,
-    MapZoneKind.stairs: 18,
+    MapZoneKind.restaurant: 14,
+    MapZoneKind.entranceHall: 15,
+    MapZoneKind.corridor: 16,
+    MapZoneKind.studyLoft: 17,
+    MapZoneKind.atriumVoid: 18,
+    MapZoneKind.stairs: 19,
     MapZoneKind.skybridge: 30,
   };
 
@@ -265,6 +269,8 @@ class FloorPlanPainter extends CustomPainter {
         _hatch(canvas, path, palette.hatch, spacing: projection.scale * 3.2);
       case MapZoneKind.classroom:
         canvas.drawPath(path, Paint()..color = palette.classroom);
+      case MapZoneKind.greenhouse:
+        canvas.drawPath(path, Paint()..color = palette.greenhouse);
       case MapZoneKind.restaurant:
         canvas.drawPath(path, Paint()..color = palette.restaurant);
       case MapZoneKind.lobby:

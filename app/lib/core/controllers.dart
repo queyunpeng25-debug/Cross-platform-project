@@ -209,6 +209,7 @@ class AppSettingsController extends ZenController {
         // When demo mode is turned off, revert to lobby if the current station was not actually scanned
         if (!progress.isStationUnlocked(progress.currentStationId.value, demoUnlockAll: false)) {
           progress.currentStationId.value = 'lobby';
+          progress.clearMapMarker();
         }
       }
     }
@@ -232,6 +233,8 @@ class TourProgressController extends ZenController {
   static const String _keyVisited = 'cs_tour_visited_stations';
   static const String _keyScanned = 'cs_tour_scanned_stations_v2';
   static const String _keyPuzzles = 'cs_tour_collected_puzzles';
+  static const String _keyMapMarker = 'cs_map_marker_id';
+  static const String _keyMapStationAtScan = 'cs_map_marker_station_at_scan';
 
   final StationCatalogRepository catalog;
   final SharedPreferences? prefs;
@@ -240,6 +243,7 @@ class TourProgressController extends ZenController {
   late final visitedStationIds = obs<Set<String>>(<String>{'lobby'});
   late final scannedStationIds = obs<Set<String>>(<String>{});
   late final collectedPuzzleIds = obs<Set<String>>(<String>{});
+  late final mapMarkerRevision = obs<int>(0);
 
   void _hydrate() {
     final p = prefs;
@@ -289,6 +293,16 @@ class TourProgressController extends ZenController {
   bool hasCollectedPiece(String stationId) =>
       collectedPuzzleIds.value.contains(stationId);
 
+  void notifyMapMarkerChanged() {
+    mapMarkerRevision.value = mapMarkerRevision.value + 1;
+  }
+
+  void clearMapMarker() {
+    unawaited(prefs?.remove(_keyMapMarker));
+    unawaited(prefs?.remove(_keyMapStationAtScan));
+    notifyMapMarkerChanged();
+  }
+
   /// Called when the user scans a station's QR/visual marker (or when Mustafa's
   /// map QR updates the user's current building location).
   void unlockAndSetCurrentStation(String stationId) {
@@ -301,6 +315,7 @@ class TourProgressController extends ZenController {
     unawaited(prefs?.setString(_keyCurrent, stationId));
     unawaited(prefs?.setStringList(_keyScanned, nextScanned.toList()));
     unawaited(prefs?.setStringList(_keyVisited, nextVisited.toList()));
+    clearMapMarker();
   }
 
   /// Updates active position when revisiting an already-unlocked station or previewing in demo mode.
@@ -309,6 +324,7 @@ class TourProgressController extends ZenController {
     if (!isStationUnlocked(stationId, demoUnlockAll: demoUnlockAll)) return;
     currentStationId.value = stationId;
     unawaited(prefs?.setString(_keyCurrent, stationId));
+    clearMapMarker();
   }
 
   /// Marks a station's floating AR puzzle piece as caught (`🧩`).
@@ -348,6 +364,7 @@ class TourProgressController extends ZenController {
     await prefs?.remove(_keyVisited);
     await prefs?.remove(_keyScanned);
     await prefs?.remove(_keyPuzzles);
+    clearMapMarker();
   }
 }
 

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:zenify/zenify.dart';
 
 import '../../core/controllers.dart';
 import '../../core/models.dart';
@@ -94,14 +95,17 @@ class MapPositionStore {
   String? _markerId;
   String? _stationAtScan;
 
-  String? get markerId => _markerId;
-  String? get stationAtScan => _stationAtScan;
+  String? get markerId =>
+      _prefs != null ? _prefs.getString(_keyMarker) : _markerId;
+  String? get stationAtScan =>
+      _prefs != null ? _prefs.getString(_keyStationAtScan) : _stationAtScan;
 
   void setMarker(String markerId, {required String stationAtScan}) {
     _markerId = markerId;
     _stationAtScan = stationAtScan;
     unawaited(_prefs?.setString(_keyMarker, markerId));
     unawaited(_prefs?.setString(_keyStationAtScan, stationAtScan));
+    Zen.findOrNull<TourProgressController>()?.notifyMapMarkerChanged();
   }
 
   void clear() {
@@ -109,6 +113,7 @@ class MapPositionStore {
     _stationAtScan = null;
     unawaited(_prefs?.remove(_keyMarker));
     unawaited(_prefs?.remove(_keyStationAtScan));
+    Zen.findOrNull<TourProgressController>()?.notifyMapMarkerChanged();
   }
 }
 

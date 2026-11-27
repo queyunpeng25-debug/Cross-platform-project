@@ -18,7 +18,9 @@ import '../../core/controllers.dart';
 import '../../core/device_capabilities.dart';
 import '../../core/models.dart';
 import '../../core/translation_service.dart';
-import 'live_frame_grabber.dart';
+import '../map/cs_building_map_data.dart';
+import '../map/map_models.dart';
+import '../map/map_positioning.dart';
 import 'place_image_recognizer.dart';
 
 /// Notifier bridged from the parent `FrostedSplitDock` center Shutter button
@@ -42,6 +44,7 @@ class UnifiedScanScreen extends StatefulWidget {
     required this.onBackToLobby,
     required this.onStationMatched,
     required this.onOpenSideMenu,
+    this.onMapMarkerMatched,
     this.initialCatchStationId,
   });
 
@@ -49,6 +52,7 @@ class UnifiedScanScreen extends StatefulWidget {
   final VoidCallback onBackToLobby;
   final ValueChanged<String> onStationMatched;
   final VoidCallback onOpenSideMenu;
+  final ValueChanged<MapPlace>? onMapMarkerMatched;
   final String? initialCatchStationId;
 
   @override
@@ -61,15 +65,10 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
   static const Color _goldSparkle = Color(0xFFF3C64F);
 
   late final AnimationController _floatController;
-  final GlobalKey _cameraPreviewBoundaryKey = GlobalKey();
+  final MobileScannerController _scannerController = MobileScannerController();
   final ImagePicker _imagePicker = ImagePicker();
 
   PlaceImageRecognizer? _placeRecognizer;
-  Timer? _liveVisionTimer;
-  bool _liveVisionBusy = false;
-  String? _pendingVisualStationId;
-  DateTime _pendingVisualAt = DateTime.fromMillisecondsSinceEpoch(0);
-  DateTime _lastVisualMatchedAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   int _shutterRequestId = 0;
   bool _shutterBusy = false;
@@ -83,7 +82,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
   DateTime _lastUnrecognizedQrAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   String _statusMessage =
-      'Point at a QR code, door logo, or building sign — or press Shutter to scan.';
+      'Point the camera at a station or map QR code to scan.';
 
   bool get _supportsNativeArPortraits => DeviceCapabilities.supportsNative3dAr;
 
@@ -103,11 +102,6 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
     )..repeat();
 
     widget.shutterController.addListener(_onShutterTriggered);
-    unawaited(_ensurePlaceRecognizer());
-    _liveVisionTimer = Timer.periodic(
-      const Duration(milliseconds: 1500),
-      (_) => unawaited(_probeLiveVisualPlace()),
-    );
   }
 
   Future<PlaceImageRecognizer?> _ensurePlaceRecognizer() async {
@@ -144,7 +138,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
 
   @override
   void dispose() {
-    _liveVisionTimer?.cancel();
+    unawaited(_scannerController.dispose());
     widget.shutterController.removeListener(_onShutterTriggered);
     _floatController.dispose();
     super.dispose();
@@ -319,60 +313,6 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
     }
   }
 
-  Future<void> _probeLiveVisualPlace() async {
-    if (!mounted ||
-        _isCatchMode ||
-        _shutterBusy ||
-        _liveVisionBusy ||
-        _cameraSuspendedForNativeAr) {
-      return;
-    }
-    final now = DateTime.now();
-    if (now.difference(_lastVisualMatchedAt) < const Duration(seconds: 3) ||
-        now.difference(_lastQrProcessedAt) < const Duration(seconds: 3)) {
-      return;
-    }
-    final recognizer = _placeRecognizer;
-    if (recognizer == null) return;
-
-    _liveVisionBusy = true;
-    try {
-      final frame = await grabLiveCameraFrame(
-        _cameraPreviewBoundaryKey,
-        maxDimension: 640,
-      );
-      if (!mounted || frame == null || _isCatchMode || _shutterBusy) return;
-
-      final match = recognizer.recognizeRgba(frame);
-      if (!mounted || match == null) {
-        if (now.difference(_pendingVisualAt) > const Duration(seconds: 3)) {
-          _pendingVisualStationId = null;
-        }
-        return;
-      }
-
-      final confirmed = match.isHighConfidence ||
-          (_pendingVisualStationId == match.stationId &&
-              now.difference(_pendingVisualAt) <=
-                  const Duration(milliseconds: 3200));
-
-      if (confirmed) {
-        _pendingVisualStationId = null;
-        _lastVisualMatchedAt = DateTime.now();
-        await _applyVisualPlaceMatch(match);
-      } else {
-        _pendingVisualStationId = match.stationId;
-        _pendingVisualAt = now;
-        setState(() {
-          _statusMessage =
-              'Spotted ${match.label} — hold steady or press Shutter to open.';
-        });
-      }
-    } finally {
-      _liveVisionBusy = false;
-    }
-  }
-
   Future<void> _launchExternalUrlSafely(String rawUrl) async {
     final uri = Uri.tryParse(rawUrl);
     if (uri == null) return;
@@ -439,7 +379,6 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
       if (!mounted) return false;
 
       if (match != null) {
-        _lastVisualMatchedAt = DateTime.now();
         await _applyVisualPlaceMatch(match);
         return true;
       }
@@ -463,84 +402,27 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
     if (_shutterBusy || token != _shutterRequestId) return;
     _shutterBusy = true;
     try {
-      setState(() {
-        _statusMessage = 'Analysing live camera frame...';
-      });
-
-      final recognizer = await _ensurePlaceRecognizer();
-      if (!mounted || token != _shutterRequestId) return;
-
-      final liveFrame = recognizer != null
-          ? await grabLiveCameraFrame(
-              _cameraPreviewBoundaryKey,
-              maxDimension: 680,
-            )
-          : null;
-      if (!mounted || token != _shutterRequestId) return;
-
-      if (recognizer != null && liveFrame != null) {
-        final match = recognizer.recognizeRgba(liveFrame);
-        if (match != null) {
-          _lastVisualMatchedAt = DateTime.now();
-          await _applyVisualPlaceMatch(match);
-          return;
-        }
-
-        // Camera IS active, so do not pop up a manual menu on non-matching shots:
-        // keep real camera behavior and point to (i) only if fallback is needed.
+      // When the live camera is active, QR codes are decoded automatically —
+      // avoid running CV place matching on live frames so unrelated rooms do
+      // not open unexpectedly while aiming at a QR code.
+      if (_scannerController.value.error == null) {
         setState(() {
           _statusMessage =
-              'No match in ${liveFrame.width}×${liveFrame.height} frame — center the logo/sign inside the box and press Shutter again.';
+              'QR codes scan automatically — center the QR code inside the frame.';
         });
         return;
-      }
-
-      // On Android/iOS devices where SurfaceProducer blocks GPU texture readback,
-      // capture a real hardware camera frame via ImagePicker.
-      if (!kIsWeb && recognizer != null) {
-        try {
-          setState(() => _cameraSuspendedForNativeAr = true);
-          await WidgetsBinding.instance.endOfFrame;
-          final shot = await _imagePicker.pickImage(
-            source: ImageSource.camera,
-            maxWidth: 1080,
-            maxHeight: 1080,
-          );
-          if (mounted) {
-            setState(() => _cameraSuspendedForNativeAr = false);
-          }
-          if (shot != null && mounted && token == _shutterRequestId) {
-            final bytes = await shot.readAsBytes();
-            final match = await recognizer.recognizeEncodedBytes(bytes);
-            if (!mounted || token != _shutterRequestId) return;
-            if (match != null) {
-              _lastVisualMatchedAt = DateTime.now();
-              await _applyVisualPlaceMatch(match);
-              return;
-            }
-            setState(() {
-              _statusMessage =
-                  'No registered place matched — move closer to the sign/logo and try again.';
-            });
-            return;
-          }
-        } catch (_) {
-          if (mounted) {
-            setState(() => _cameraSuspendedForNativeAr = false);
-          }
-        }
       }
 
       // Only open the fallback/photo sheet when no live camera stream is available.
       setState(() {
         _statusMessage =
-            'Live camera frame unavailable — upload a photo or use demo fallback below.';
+            'Live camera unavailable — upload a photo or use demo fallback below.';
       });
 
       final sample = await _showVisualRecognitionSheet(
         title: 'Camera Unavailable · Photo & Demo Scan',
         subtitle:
-            'Upload a photo to run real visual recognition, or use a demo preset when testing without a camera:',
+            'Upload a photo or use a demo preset when testing without a camera:',
       );
 
       if (!mounted || token != _shutterRequestId) return;
@@ -551,7 +433,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
       if (sample == null || sample.trim().isEmpty) {
         setState(() {
           _statusMessage =
-              'Point at a QR code, door logo, or building sign — or press Shutter to scan.';
+              'Point the camera at a station or map QR code to scan.';
         });
         return;
       }
@@ -611,9 +493,31 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
     }
 
     final catalog = _catalogOrNull();
+    var sawCode = false;
     for (final barcode in capture.barcodes) {
       final raw = barcode.rawValue?.trim();
       if (raw == null || raw.isEmpty) continue;
+      sawCode = true;
+
+      final markerId = MapCodeResolver.markerIdFromRaw(raw);
+      if (markerId != null) {
+        final place = CsBuildingMapData.markerById(markerId);
+        if (place != null) {
+          _lastQrProcessedAt = now;
+          unawaited(HapticFeedback.selectionClick());
+          final progress = _progressOrNull();
+          MapPositionStore(progress?.prefs).setMarker(
+            place.id,
+            stationAtScan: progress?.currentStationId.value ?? 'lobby',
+          );
+          setState(() {
+            _statusMessage =
+                'Map location "${place.label}" recognised! Opening map...';
+          });
+          widget.onMapMarkerMatched?.call(place);
+          return;
+        }
+      }
 
       final matchedId = catalog?.resolveStationFromRawCode(raw);
       if (matchedId != null) {
@@ -643,11 +547,12 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
       }
     }
 
+    if (!sawCode) return;
     if (now.difference(_lastUnrecognizedQrAt) >= const Duration(seconds: 2)) {
       _lastUnrecognizedQrAt = now;
       setState(() {
         _statusMessage =
-            'Unrecognized QR code. Point at an official CS Explorer marker or sign.';
+            'Unrecognized QR code. Point at an official CS Explorer QR code.';
       });
     }
   }
@@ -822,14 +727,12 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
         children: [
           // 1. Live Camera Feed (MobileScanner with JIT permission & error fallback)
           if (!_cameraSuspendedForNativeAr)
-            RepaintBoundary(
-              key: _cameraPreviewBoundaryKey,
-              child: MobileScanner(
-                onDetect: _onBarcodeDetected,
-                errorBuilder: (context, error) => _CameraFallbackPanel(
-                  errorCodeName: error.errorCode.name,
-                  onOpenVisualSimulation: _openInfoAndFallbackSheet,
-                ),
+            MobileScanner(
+              controller: _scannerController,
+              onDetect: _onBarcodeDetected,
+              errorBuilder: (context, error) => _CameraFallbackPanel(
+                errorCodeName: error.errorCode.name,
+                onOpenVisualSimulation: _openInfoAndFallbackSheet,
               ),
             )
           else

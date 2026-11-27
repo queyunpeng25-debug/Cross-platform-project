@@ -122,7 +122,12 @@ class SettingsScreen extends StatelessWidget {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 680),
             child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 36),
+              padding: EdgeInsets.fromLTRB(
+                20,
+                12,
+                20,
+                MediaQuery.paddingOf(context).bottom + 112,
+              ),
               children: [
                 // 1. Appearance — Dark Mode / Light Mode
                 Card(

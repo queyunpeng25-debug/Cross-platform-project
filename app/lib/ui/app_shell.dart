@@ -73,6 +73,17 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
   }
 
   @override
+  void didUpdateWidget(covariant CsExplorerShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialStationQueryParam != oldWidget.initialStationQueryParam ||
+        widget.initialMapQueryParam != oldWidget.initialMapQueryParam) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _applyInitialStationDeepLink();
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _shutterController.dispose();
     super.dispose();
@@ -109,12 +120,13 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
     if (station == null) return;
 
     progress.unlockAndSetCurrentStation(station.id);
-    if (station.id != 'lobby') {
-      setState(() {
-        _selectedStationId = station.id;
-        _destination = ShellDestination.stationDetail;
-      });
-    }
+    setState(() {
+      _activeCatchStationId = null;
+      _selectedStationId = station.id;
+      _destination = station.id == 'lobby'
+          ? ShellDestination.lobby
+          : ShellDestination.stationDetail;
+    });
   }
 
   Future<void> _maybeShowFirstLaunchLanguageDialog() async {
@@ -311,20 +323,7 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
     }
   }
 
-  bool get _showsFloatingDock {
-    switch (_destination) {
-      case ShellDestination.lobby:
-      case ShellDestination.scan:
-      case ShellDestination.map:
-        return true;
-      case ShellDestination.stationDetail:
-      case ShellDestination.canteen:
-      case ShellDestination.settings:
-      case ShellDestination.team:
-      case ShellDestination.finalPuzzle:
-        return false;
-    }
-  }
+  bool get _showsFloatingDock => true;
 
   Widget _buildActivePane({required bool isExpandedLayout}) {
     final catalog = Zen.find<StationCatalogRepository>();
@@ -353,6 +352,7 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
           key: ValueKey<String>('station-detail-${station.id}'),
           station: station,
           showMenuButton: !isExpandedLayout,
+          reserveBottomDockSpace: true,
           onBackToLobby: _goBackToLobby,
           onOpenSideMenu: _openSideMenu,
           onCatchPuzzlePiece: () => _triggerCatchPuzzleForStation(station),
@@ -380,6 +380,12 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
           onBackToLobby: _goBackToLobby,
           onOpenSideMenu: _openSideMenu,
           onStationMatched: (id) => _openStationById(id, fromScanner: true),
+          onMapMarkerMatched: (_) {
+            setState(() {
+              _activeCatchStationId = null;
+              _destination = ShellDestination.map;
+            });
+          },
         );
 
       case ShellDestination.map:
