@@ -7,6 +7,7 @@ import 'package:zenify/zenify.dart';
 import '../../core/controllers.dart';
 import '../../core/models.dart';
 import '../../core/translation_service.dart';
+import 'canteen_menu_service.dart';
 
 /// Demonstrable default implementation of [CanteenFeatureSlot] for **Juhani**.
 ///
@@ -17,7 +18,9 @@ import '../../core/translation_service.dart';
 /// - [settings] (`AppSettingsController.languageCode`) to observe language switches.
 /// - [onCatchPuzzlePiece] to launch the Canteen station's floating AR puzzle hunt.
 class DefaultCanteenFeatureSlot implements CanteenFeatureSlot {
-  const DefaultCanteenFeatureSlot();
+  const DefaultCanteenFeatureSlot({required this.menuRepository});
+
+  final CanteenMenuRepository menuRepository;
 
   @override
   Widget buildCanteenScreen(
@@ -30,38 +33,25 @@ class DefaultCanteenFeatureSlot implements CanteenFeatureSlot {
     return _DefaultCanteenView(
       translator: translator,
       settings: settings,
+      menuRepository: menuRepository,
       onBackToLobby: onBackToLobby,
       onCatchPuzzlePiece: onCatchPuzzlePiece,
     );
   }
 }
 
-class _SampleDish {
-  const _SampleDish({
-    required this.category,
-    required this.name,
-    required this.description,
-    required this.dietaryBadges,
-    required this.studentPrice,
-  });
-
-  final String category;
-  final String name;
-  final String description;
-  final String dietaryBadges;
-  final String studentPrice;
-}
-
 class _DefaultCanteenView extends StatefulWidget {
   const _DefaultCanteenView({
     required this.translator,
     required this.settings,
+    required this.menuRepository,
     required this.onBackToLobby,
     required this.onCatchPuzzlePiece,
   });
 
   final TranslationService translator;
   final AppSettingsController settings;
+  final CanteenMenuRepository menuRepository;
   final VoidCallback onBackToLobby;
   final VoidCallback onCatchPuzzlePiece;
 
@@ -73,42 +63,10 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
   static const Color _forestAccent = Color(0xFF262523);
   static const Color _canteenAccent = Color(0xFF7A5C3E);
   static const String _subwayMenuUrl = 'https://www.subway.fi/en/menu';
+  static const String _canteenMenuUrl = 'https://folio.kanttiinit.fi/en/area/1';
 
   static const String _kitchenLiveBannerEn =
       'Sodexo Tietotekniikantalo (~€3.10 Kela student lunch with Frank/Slice card) · Campus Subway also offers Kela-subsidized Päivän Subi · Compare all Otaniemi menus on kanttiinit.fi.';
-
-  static const List<_SampleDish> _sampleDishes = [
-    _SampleDish(
-      category: 'Nordic Bistro',
-      name: 'Creamy Archipelago Salmon Soup',
-      description:
-          'Slow-simmered Atlantic salmon, diced potatoes, carrots, and fresh dill in a lactose-free broth.',
-      dietaryBadges: 'L · G',
-      studentPrice: '€2.95',
-    ),
-    _SampleDish(
-      category: 'Green & Vegan',
-      name: 'Crispy Oat-Herb Tofu & Roasted Root Bowl',
-      description:
-          'Spiced Nordic oat-crusted tofu served with roasted parsnips, quinoa, and lemon-tahini drizzle.',
-      dietaryBadges: 'VEG · M · G',
-      studentPrice: '€2.95',
-    ),
-    _SampleDish(
-      category: 'Campus Classic',
-      name: 'Traditional Finnish Pea Soup & Oven Pancake',
-      description:
-          'Hearty Thursday-style green pea soup paired with warm cardamom oven pancake and berry jam.',
-      dietaryBadges: 'L',
-      studentPrice: '€2.95',
-    ),
-  ];
-
-  static const List<String> _preGeneratedDemoReviews = [
-    '★★★★★ · Verified Student Demo Review: "The salmon soup comes out piping hot with plenty of fresh dill, and the rye bread counter moves fast even at 12:05!"',
-    '★★★★☆ · Verified Student Demo Review: "Great vegan bowl today — super crispy tofu and generous lemon-tahini dressing for €2.95."',
-    '★★★★★ · Verified Student Demo Review: "Classic Thursday pea soup + warm oven pancake with strawberry jam never misses between CS lectures."',
-  ];
 
   final TextEditingController _reviewNoteController = TextEditingController();
   int _selectedDishIndex = 0;
@@ -120,7 +78,18 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
   String _translatedKitchenBanner = _kitchenLiveBannerEn;
 
   @override
+  void initState() {
+    super.initState();
+    widget.menuRepository.addListener(_handleMenuChanged);
+  }
+
+  void _handleMenuChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void dispose() {
+    widget.menuRepository.removeListener(_handleMenuChanged);
     _reviewNoteController.dispose();
     super.dispose();
   }
@@ -160,7 +129,14 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
     await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
-  void _submitStaticDemoReview() {
+  Future<void> _openCanteenMenu() async {
+    await launchUrl(
+      Uri.parse(_canteenMenuUrl),
+      mode: LaunchMode.externalApplication,
+    );
+  }
+
+  void _submitDemoReview() {
     FocusScope.of(context).unfocus();
     setState(() {
       _reviewSubmitted = true;
@@ -183,6 +159,7 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
           final activeLanguage = SupportedLanguage.byCode(langCode);
           _syncDynamicBannerTranslation(langCode);
 
+          final menu = widget.menuRepository;
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 12, 20, 132),
             children: [
@@ -219,7 +196,7 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
               ),
               const SizedBox(height: 18),
 
-              // Header Slot Card for Juhani
+              // Daily menu header
               Card(
                 elevation: 0,
                 shape: RoundedRectangleBorder(
@@ -252,7 +229,7 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: TrText(
-                              "Today's Campus Lunch Preview (Slot for Juhani)",
+                              "Today's Campus Lunch Menu",
                               style: theme.textTheme.titleMedium?.copyWith(
                                 fontWeight: FontWeight.w800,
                               ),
@@ -306,8 +283,43 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
               ),
               const SizedBox(height: 14),
 
-              // Sample Translated Lunch Items
-              for (final dish in _sampleDishes) ...[
+              if (menu.isLoading) ...[
+                const LinearProgressIndicator(),
+                const SizedBox(height: 12),
+              ],
+              if (menu.errorMessage != null)
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(menu.errorMessage!),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            TextButton(
+                              onPressed: menu.isLoading
+                                  ? null
+                                  : widget.menuRepository.refresh,
+                              child: const Text('Retry'),
+                            ),
+                            TextButton(
+                              onPressed: _openCanteenMenu,
+                              child: const Text('Open Kanttiinit'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (menu.dishes.isEmpty &&
+                  !menu.isLoading &&
+                  menu.errorMessage == null)
+                const Text('No lunch dishes are currently listed.'),
+              for (final dish in menu.dishes) ...[
                 Card(
                   elevation: 0,
                   shape: RoundedRectangleBorder(
@@ -320,56 +332,11 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: _canteenAccent.withValues(alpha: 0.12),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: TrText(
-                                dish.category,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  color: _canteenAccent,
-                                ),
-                              ),
-                            ),
-                            const Spacer(),
-                            Text(
-                              '${dish.dietaryBadges}  ·  ${dish.studentPrice}',
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        TrText(
-                          dish.name,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        TrText(
-                          dish.description,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            height: 1.4,
-                            color: theme.colorScheme.onSurface.withValues(
-                              alpha: 0.75,
-                            ),
-                          ),
-                        ),
-                      ],
+                    child: TrText(
+                      dish,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                 ),
@@ -439,7 +406,7 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
               ),
               const SizedBox(height: 14),
 
-              // Safe Static Demo Student Review Box
+              // Safe Demo Student Review Box
               Card(
                 elevation: 0,
                 shape: RoundedRectangleBorder(
@@ -463,7 +430,7 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
                       ),
                       const SizedBox(height: 6),
                       TrText(
-                        'Pick a dish and rating below — submitting displays a moderated pre-generated student review for safe classroom demonstrations.',
+                        'Pick a dish and rating below — submitting displays a clearly labeled demo review for safe classroom demonstrations.',
                         style: theme.textTheme.bodySmall?.copyWith(
                           height: 1.35,
                           color: theme.colorScheme.onSurface.withValues(
@@ -476,11 +443,11 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
                         spacing: 8,
                         runSpacing: 8,
                         children: [
-                          for (var i = 0; i < _sampleDishes.length; i++)
+                          for (var i = 0; i < menu.dishes.length; i++)
                             ChoiceChip(
                               materialTapTargetSize:
                                   MaterialTapTargetSize.padded,
-                              label: TrText(_sampleDishes[i].category),
+                              label: TrText(menu.dishes[i]),
                               selected: _selectedDishIndex == i,
                               onSelected: (_) => setState(() {
                                 _selectedDishIndex = i;
@@ -538,11 +505,13 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        onPressed: _submitStaticDemoReview,
+                        onPressed: menu.dishes.isEmpty
+                            ? null
+                            : _submitDemoReview,
                         icon: const Icon(Icons.rate_review_outlined, size: 18),
                         label: const TrText('Submit Demo Review'),
                       ),
-                      if (_reviewSubmitted) ...[
+                      if (_reviewSubmitted && menu.dishes.isNotEmpty) ...[
                         const SizedBox(height: 14),
                         Container(
                           padding: const EdgeInsets.all(14),
@@ -554,8 +523,9 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
                             ),
                           ),
                           child: TrText(
-                            _preGeneratedDemoReviews[_selectedDishIndex %
-                                _preGeneratedDemoReviews.length],
+                            '${'★' * _selectedStars} · Verified Student Demo Review: '
+                            '"${menu.dishes[_selectedDishIndex.clamp(0, menu.dishes.length - 1)]} '
+                            'is a satisfying campus lunch option."',
                             style: theme.textTheme.bodyMedium?.copyWith(
                               fontWeight: FontWeight.w600,
                               height: 1.4,
