@@ -22,16 +22,31 @@
       "asset": "assets/place_targets/guild_tik.jpg"
     },
     {
+      "id": "guild_tik_emblem",
+      "stationId": "guilds",
+      "label": "Tietokilta (TiK) Gear Emblem",
+      "asset": "assets/place_targets/guild_tik_emblem.jpg",
+      "isCompactEmblem": true
+    },
+    {
       "id": "guild_athene",
       "stationId": "guilds",
       "label": "Athene Guild Emblem",
-      "asset": "assets/place_targets/guild_athene.jpg"
+      "asset": "assets/place_targets/guild_athene.jpg",
+      "isCompactEmblem": true
     },
     {
       "id": "guild_dg",
       "stationId": "guilds",
       "label": "Data Guild (DG · DATABASE) Logo",
       "asset": "assets/place_targets/guild_dg.jpg"
+    },
+    {
+      "id": "guild_dg_emblem",
+      "stationId": "guilds",
+      "label": "Data Guild [DG] Emblem",
+      "asset": "assets/place_targets/guild_dg_emblem.jpg",
+      "isCompactEmblem": true
     },
     {
       "id": "locked_door_a",

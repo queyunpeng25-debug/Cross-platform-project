@@ -19,31 +19,84 @@ RawRgbaFrame _adjustExposureAndContrast(
   return RawRgbaFrame(width: src.width, height: src.height, rgba: out);
 }
 
+/// Composites a rotated, glare-washed target card into the middle of a wide
+/// 16:9 room background to simulate holding a phone screen or small sign in
+/// front of a laptop/mobile camera.
+RawRgbaFrame _compositeOnWideWebcamScene({
+  required RawRgbaFrame roomBackground,
+  required RawRgbaFrame targetImage,
+  required double widthFraction,
+  double tiltDegrees = 10.0,
+  double glareGain = 0.58,
+  double glareBias = 58.0,
+}) {
+  final bg = roomBackground.resizeExact(640, 360);
+  final out = Uint8List.fromList(bg.rgba);
+
+  final targetW = (640 * widthFraction).round();
+  final aspect = targetImage.width / targetImage.height;
+  final targetH = (targetW / aspect).round().clamp(24, 300);
+  final card = _adjustExposureAndContrast(
+    targetImage.resizeExact(targetW, targetH),
+    gain: glareGain,
+    bias: glareBias,
+  );
+
+  final rad = tiltDegrees * math.pi / 180.0;
+  final cosA = math.cos(rad);
+  final sinA = math.sin(rad);
+  const cx = 320.0;
+  const cy = 180.0;
+  final halfW = card.width / 2.0;
+  final halfH = card.height / 2.0;
+
+  for (var y = 0; y < 360; y++) {
+    for (var x = 0; x < 640; x++) {
+      final dx = x - cx;
+      final dy = y - cy;
+      // Inverse rotate back into card local coordinates
+      final lx = dx * cosA + dy * sinA + halfW;
+      final ly = -dx * sinA + dy * cosA + halfH;
+      if (lx >= 0 && lx < card.width - 1 && ly >= 0 && ly < card.height - 1) {
+        final sx = lx.round();
+        final sy = ly.round();
+        final srcIdx = (sy * card.width + sx) * 4;
+        final dstIdx = (y * 640 + x) * 4;
+        out[dstIdx] = card.rgba[srcIdx];
+        out[dstIdx + 1] = card.rgba[srcIdx + 1];
+        out[dstIdx + 2] = card.rgba[srcIdx + 2];
+        out[dstIdx + 3] = 255;
+      }
+    }
+  }
+  return RawRgbaFrame(width: 640, height: 360, rgba: out);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late PlaceImageRecognizer recognizer;
 
+  Future<RawRgbaFrame> loadAssetFrame(String assetPath, {int maxDim = 640}) async {
+    final data = await rootBundle.load(assetPath);
+    final bytes = data.buffer.asUint8List(
+      data.offsetInBytes,
+      data.lengthInBytes,
+    );
+    final decoded = await RawRgbaFrame.decodeEncoded(bytes, maxDimension: maxDim);
+    expect(decoded, isNotNull, reason: 'Failed to decode $assetPath');
+    return decoded!;
+  }
+
   setUpAll(() async {
     recognizer = await PlaceImageRecognizer.loadDefault();
   });
 
-  test('loads all registered place targets from assets', () {
-    expect(recognizer.targetCount, 13);
+  test('loads all 15 registered place targets from assets', () {
+    expect(recognizer.targetCount, 15);
   });
 
   test('matches realistic zoomed, off-center, and lighting-shifted views', () async {
-    Future<RawRgbaFrame> loadAssetFrame(String assetPath) async {
-      final data = await rootBundle.load(assetPath);
-      final bytes = data.buffer.asUint8List(
-        data.offsetInBytes,
-        data.lengthInBytes,
-      );
-      final decoded = await RawRgbaFrame.decodeEncoded(bytes, maxDimension: 520);
-      expect(decoded, isNotNull, reason: 'Failed to decode $assetPath');
-      return decoded!;
-    }
-
     // 1. Greenhouse: full older PDF station photo (different angle & distance!)
     final greenhouseStationPhoto = await loadAssetFrame(
       'assets/stations/greenhouse_1f.jpg',
@@ -66,14 +119,16 @@ void main() {
     // 3. Guild logos under exposure shift & off-center crop
     for (final asset in <String>[
       'assets/place_targets/guild_tik.jpg',
+      'assets/place_targets/guild_tik_emblem.jpg',
       'assets/place_targets/guild_athene.jpg',
       'assets/place_targets/guild_dg.jpg',
+      'assets/place_targets/guild_dg_emblem.jpg',
     ]) {
       final raw = await loadAssetFrame(asset);
       final perturbed = _adjustExposureAndContrast(
         raw.cropNormalized(0.06, 0.05, 0.94, 0.92),
-        gain: 0.82,
-        bias: 18,
+        gain: 0.72,
+        bias: 28,
       );
       final m = recognizer.recognizeRgba(perturbed);
       expect(m, isNotNull, reason: 'Perturbed $asset should match guilds');
@@ -115,6 +170,47 @@ void main() {
     expect(boxMatch!.stationId, 'tuas_bridge');
   });
 
+  test(
+    'recognises small, tilted, glare-washed guild logos & signs inside a 16:9 webcam scene',
+    () async {
+      final roomBg = await loadAssetFrame('assets/stations/study_3f.jpg');
+
+      final cases = <(String, String, double)>[
+        ('assets/place_targets/guild_tik.jpg', 'guilds', 0.24),
+        ('assets/place_targets/guild_tik_emblem.jpg', 'guilds', 0.22),
+        ('assets/place_targets/guild_athene.jpg', 'guilds', 0.24),
+        ('assets/place_targets/guild_dg.jpg', 'guilds', 0.25),
+        ('assets/place_targets/locked_door_a.jpg', 'locked_corridors', 0.28),
+        ('assets/place_targets/tuas_door_sci.jpg', 'tuas_bridge', 0.28),
+        ('assets/place_targets/subway_wall.jpg', 'canteen', 0.28),
+      ];
+
+      for (final (asset, expectedStation, widthFrac) in cases) {
+        final targetImg = await loadAssetFrame(asset);
+        final webcamScene = _compositeOnWideWebcamScene(
+          roomBackground: roomBg,
+          targetImage: targetImg,
+          widthFraction: widthFrac,
+          tiltDegrees: 11.0,
+          glareGain: 0.56,
+          glareBias: 60.0,
+        );
+        final match = recognizer.recognizeRgba(webcamScene);
+        expect(
+          match,
+          isNotNull,
+          reason:
+              'Small tilted glare-washed $asset (${(widthFrac * 100).round()}% of 16:9 webcam width) failed to match',
+        );
+        expect(
+          match!.stationId,
+          expectedStation,
+          reason: '$asset matched ${match.stationId} instead of $expectedStation',
+        );
+      }
+    },
+  );
+
   test('rejects unrelated scenes, portraits, retro PCs, and random noise', () async {
     for (final distractor in <String>[
       'assets/computers/computer_0.jpg',
@@ -137,7 +233,6 @@ void main() {
       );
     }
 
-    // Synthetic structured noise / gradient frame
     final noise = Uint8List(240 * 240 * 4);
     final rng = math.Random(42);
     for (var i = 0; i < noise.length; i += 4) {

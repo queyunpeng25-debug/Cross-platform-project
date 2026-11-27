@@ -10,7 +10,7 @@ import 'place_image_recognizer.dart';
 /// - **Android / iOS**: samples the `Texture`-backed `RepaintBoundary`.
 Future<RawRgbaFrame?> grabLiveCameraFrame(
   GlobalKey repaintBoundaryKey, {
-  int maxDimension = 360,
+  int maxDimension = 640,
 }) {
   return grabPlatformCameraFrame(
     repaintBoundaryKey,
