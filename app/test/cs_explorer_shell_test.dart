@@ -223,4 +223,89 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     expect(await SpatialPreflightService.requestCameraPermission(), isFalse);
   });
+
+  testWidgets(
+    'Lobby displays guide introduction and collapsed-by-default route instructions',
+    (tester) async {
+      DeviceCapabilities.debugExperienceOverride = DeviceExperience.nativeMobile;
+      tester.view.physicalSize = const Size(430, 932);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        CsExplorerRootApp(
+          catalog: sharedCatalog,
+          translationService: _InstantTranslationService(),
+          canteenMenuRepository: CanteenMenuRepository(),
+          showFirstLaunchPrompt: false,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      // Guide intro card and mobile quick actions are visible.
+      expect(find.text('How This Guide Works'), findsOneWidget);
+      expect(find.text('Follow the Map'), findsOneWidget);
+      expect(find.text('Open Building Map'), findsOneWidget);
+      expect(find.text('Start Scanning'), findsOneWidget);
+
+      // Suggested route card starts compact / collapsed.
+      final routeToggle = find.text('Suggested Route · 1F → 3F');
+      expect(routeToggle, findsOneWidget);
+      expect(find.text('Start here · Main Level'), findsNothing);
+
+      // Scroll toggle into view if needed and expand route instructions.
+      await tester.ensureVisible(routeToggle);
+      await tester.tap(routeToggle);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Start here · Main Level'), findsOneWidget);
+      expect(find.text('Main stairs or lift'), findsOneWidget);
+      expect(find.text('Top floor'), findsOneWidget);
+
+      // Tap again to collapse back to compact default.
+      await tester.tap(routeToggle);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Start here · Main Level'), findsNothing);
+
+      // Quick action navigates straight to the interactive Building Map.
+      await tester.ensureVisible(find.text('Open Building Map'));
+      await tester.tap(find.text('Open Building Map'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('CS Building Map'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'Lobby intro adapts to laptop mode by hiding Start Scanning',
+    (tester) async {
+      DeviceCapabilities.debugExperienceOverride = DeviceExperience.laptop;
+      tester.view.physicalSize = const Size(1280, 820);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        CsExplorerRootApp(
+          catalog: sharedCatalog,
+          translationService: _InstantTranslationService(),
+          canteenMenuRepository: CanteenMenuRepository(),
+          showFirstLaunchPrompt: false,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('How This Guide Works'), findsOneWidget);
+      expect(find.text('Explore Every Stop'), findsOneWidget);
+      expect(find.text('Open Building Map'), findsOneWidget);
+      expect(find.text('Start Scanning'), findsNothing);
+      expect(find.text('Suggested Route · 1F → 3F'), findsOneWidget);
+      expect(find.text('Start here · Main Level'), findsNothing);
+    },
+  );
 }

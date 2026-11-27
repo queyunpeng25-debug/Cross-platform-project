@@ -27,6 +27,7 @@ class StationDetailScreen extends StatelessWidget {
     required this.onOpenSideMenu,
     required this.onCatchPuzzlePiece,
     this.onRunSecondaryAction,
+    this.introSection,
     this.showMenuButton = true,
     this.isRootLobbyView = false,
     this.reserveBottomDockSpace = false,
@@ -37,6 +38,7 @@ class StationDetailScreen extends StatelessWidget {
   final VoidCallback onOpenSideMenu;
   final VoidCallback onCatchPuzzlePiece;
   final VoidCallback? onRunSecondaryAction;
+  final Widget? introSection;
   final bool showMenuButton;
   final bool isRootLobbyView;
   final bool reserveBottomDockSpace;
@@ -248,6 +250,12 @@ class StationDetailScreen extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(height: 16),
+
+                              // Optional custom intro section (e.g. Lobby guide & route)
+                              if (introSection != null) ...[
+                                introSection!,
+                                const SizedBox(height: 16),
+                              ],
 
                               // Conversational body paragraphs
                               for (final paragraph in station.paragraphs) ...[
