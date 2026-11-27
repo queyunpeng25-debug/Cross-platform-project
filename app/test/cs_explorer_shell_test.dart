@@ -1,10 +1,16 @@
+import 'package:cs_building_guide/computer_exhibit.dart';
 import 'package:cs_building_guide/core/controllers.dart';
 import 'package:cs_building_guide/core/device_capabilities.dart';
 import 'package:cs_building_guide/core/models.dart';
 import 'package:cs_building_guide/core/translation_service.dart';
 import 'package:cs_building_guide/features/canteen/canteen_menu_service.dart';
+import 'package:cs_building_guide/features/map/default_map_slot.dart';
+import 'package:cs_building_guide/features/minigames/ar_tabletop_puzzle_screen.dart';
+import 'package:cs_building_guide/features/minigames/default_minigame_slot.dart';
 import 'package:cs_building_guide/features/minigames/spatial_minigame_engine.dart';
+import 'package:cs_building_guide/features/canteen/default_canteen_slot.dart';
 import 'package:cs_building_guide/main.dart';
+import 'package:cs_building_guide/ui/app_shell.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -307,5 +313,76 @@ void main() {
       expect(find.text('Suggested Route · 1F → 3F'), findsOneWidget);
       expect(find.text('Start here · Main Level'), findsNothing);
     },
+  );
+
+  testWidgets(
+    'Cold ?map=<markerId> deep link opens Building Map at that marker floor',
+    (tester) async {
+      DeviceCapabilities.debugExperienceOverride = DeviceExperience.nativeMobile;
+      tester.view.physicalSize = const Size(430, 932);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final prefs = await SharedPreferences.getInstance();
+      final canteenRepo = CanteenMenuRepository();
+      addTearDown(canteenRepo.dispose);
+
+      CsExplorerAppModule(
+        catalog: sharedCatalog,
+        translationService: _InstantTranslationService(),
+        mapSlot: const DefaultMapFeatureSlot(),
+        canteenSlot: DefaultCanteenFeatureSlot(menuRepository: canteenRepo),
+        minigameSlot: const DefaultMinigameFeatureSlot(),
+        prefs: prefs,
+      ).register(Zen.rootScope);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: CsExplorerShell(
+            initialMapQueryParam: 'lift_2f',
+            showFirstLaunchPrompt: false,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('CS Building Map'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is SegmentedButton<int> && w.selected.contains(2),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('You are here'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'ArTabletopPuzzleScreen omits uninitialized Native AR Plane toggle and ComputerPriceGame omits Preview disclaimer',
+    (tester) async {
+      final progress = TourProgressController(catalog: sharedCatalog);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ArTabletopPuzzleScreen(
+            progress: progress,
+            onBackToLobby: () {},
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+
+      expect(find.text('Native AR Plane'), findsNothing);
+      expect(find.text('AR Camera On'), findsOneWidget);
+
+      await tester.pumpWidget(const MaterialApp(home: ComputerPriceGame()));
+      await tester.pump();
+      expect(find.textContaining('Preview game'), findsNothing);
+      expect(find.text('Match the Price'), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
 }

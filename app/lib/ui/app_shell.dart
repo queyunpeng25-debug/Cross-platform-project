@@ -11,6 +11,8 @@ import '../core/controllers.dart';
 import '../core/device_capabilities.dart';
 import '../core/models.dart';
 import '../core/translation_service.dart';
+import '../features/map/cs_building_map_data.dart';
+import '../features/map/map_positioning.dart';
 import '../features/scanner/unified_scan_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/stations/lobby_home_screen.dart';
@@ -39,10 +41,12 @@ class CsExplorerShell extends StatefulWidget {
   const CsExplorerShell({
     super.key,
     this.initialStationQueryParam,
+    this.initialMapQueryParam,
     this.showFirstLaunchPrompt = true,
   });
 
   final String? initialStationQueryParam;
+  final String? initialMapQueryParam;
   final bool showFirstLaunchPrompt;
 
   @override
@@ -75,6 +79,26 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
   }
 
   void _applyInitialStationDeepLink() {
+    final rawMapParam =
+        widget.initialMapQueryParam ??
+        Uri.base.queryParameters['map'] ??
+        MapCodeResolver.markerIdFromRaw(Uri.base.toString());
+    if (rawMapParam != null && rawMapParam.trim().isNotEmpty) {
+      final place = CsBuildingMapData.markerById(rawMapParam.trim());
+      if (place != null) {
+        final progress = Zen.find<TourProgressController>();
+        MapPositionStore(progress.prefs).setMarker(
+          place.id,
+          stationAtScan: progress.currentStationId.value,
+        );
+        setState(() {
+          _activeCatchStationId = null;
+          _destination = ShellDestination.map;
+        });
+        return;
+      }
+    }
+
     final rawParam =
         widget.initialStationQueryParam ?? Uri.base.queryParameters['station'];
     if (rawParam == null || rawParam.trim().isEmpty) return;

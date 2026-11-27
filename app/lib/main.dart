@@ -73,6 +73,7 @@ class _CsExplorerRootAppState extends State<CsExplorerRootApp> {
         path: '/',
         builder: (context, state) => CsExplorerShell(
           initialStationQueryParam: state.uri.queryParameters['station'],
+          initialMapQueryParam: state.uri.queryParameters['map'],
           showFirstLaunchPrompt: widget.showFirstLaunchPrompt,
         ),
       ),

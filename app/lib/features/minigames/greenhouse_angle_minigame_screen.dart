@@ -7,12 +7,14 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:zenify/zenify.dart';
 
 import '../../core/controllers.dart';
 import '../scanner/live_frame_grabber.dart';
+import '../scanner/place_image_recognizer.dart';
 import 'greenhouse_angle_matcher.dart';
 
 /// Interactive "Find the Correct Angle" Minigame for the Learning Hub Greenhouse station.
@@ -26,7 +28,7 @@ import 'greenhouse_angle_matcher.dart';
 ///    that key architectural objects align physically (robust even if crowds/people are present).
 /// 6. Outcome:
 ///    - If matched: displays "Congratulations!" and awards station progress.
-///    - If not matched: displays "Posizione o immagine non corretta, riprova :( ".
+///    - If not matched: displays "Incorrect position or angle, try again :(".
 class GreenhouseAngleMinigameScreen extends StatefulWidget {
   const GreenhouseAngleMinigameScreen({
     super.key,
@@ -49,6 +51,7 @@ class GreenhouseAngleMinigameScreen extends StatefulWidget {
 class _GreenhouseAngleMinigameScreenState
     extends State<GreenhouseAngleMinigameScreen> {
   final GlobalKey _cameraBoundaryKey = GlobalKey();
+  final ImagePicker _imagePicker = ImagePicker();
 
   MobileScannerController? _cameraController;
   GreenhouseAngleMatcher? _matcher;
@@ -58,6 +61,7 @@ class _GreenhouseAngleMinigameScreenState
   bool _isProcessing = false;
   bool _showShutterFlash = false;
   bool _cameraPermissionGranted = true;
+  bool _cameraSuspendedForCapture = false;
 
   GreenhouseAngleMatchResult? _lastResult;
   bool _showResultOverlay = false;
@@ -174,10 +178,47 @@ class _GreenhouseAngleMinigameScreenState
       final matcher = _matcher ?? await GreenhouseAngleMatcher.load();
 
       // 1. Grab raw RGBA pixels from live camera preview
-      final frame = await grabLiveCameraFrame(
+      var frame = await grabLiveCameraFrame(
         _cameraBoundaryKey,
         maxDimension: 360,
       );
+
+      // 2. Fallback on Android/iOS when GPU SurfaceProducer blocks RepaintBoundary readback:
+      // release live preview temporarily and capture a direct hardware camera shot.
+      final isWidgetTest = WidgetsBinding.instance.runtimeType
+          .toString()
+          .contains('Test');
+      if (frame == null &&
+          !kIsWeb &&
+          !isWidgetTest &&
+          (defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.iOS)) {
+        try {
+          await _cameraController?.stop();
+          if (mounted) {
+            setState(() => _cameraSuspendedForCapture = true);
+          }
+          await WidgetsBinding.instance.endOfFrame;
+          final shot = await _imagePicker.pickImage(
+            source: ImageSource.camera,
+            maxWidth: 1080,
+            maxHeight: 1080,
+          );
+          if (shot != null && mounted) {
+            final bytes = await shot.readAsBytes();
+            frame = await RawRgbaFrame.decodeEncoded(bytes, maxDimension: 360);
+          }
+        } catch (e) {
+          debugPrint('[GreenhouseMinigame] Camera capture fallback error: $e');
+        } finally {
+          if (mounted) {
+            setState(() => _cameraSuspendedForCapture = false);
+            try {
+              unawaited(_cameraController?.start());
+            } catch (_) {}
+          }
+        }
+      }
 
       if (frame == null) {
         if (mounted) {
@@ -256,7 +297,9 @@ class _GreenhouseAngleMinigameScreenState
         fit: StackFit.expand,
         children: [
           // 1. Live Camera Preview
-          if (_cameraPermissionGranted && _cameraController != null)
+          if (!_cameraSuspendedForCapture &&
+              _cameraPermissionGranted &&
+              _cameraController != null)
             RepaintBoundary(
               key: _cameraBoundaryKey,
               child: MobileScanner(

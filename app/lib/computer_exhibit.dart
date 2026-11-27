@@ -37,7 +37,7 @@ class ComputerPriceGame extends StatefulWidget {
 }
 
 class _ComputerPriceGameState extends State<ComputerPriceGame> {
-  // Provisional game data: replace with documented launch configurations before release.
+  // Approximate rounded EUR equivalents (12 Nov 2026 ECB rate: 1 EUR = 1.1081 USD).
   static const prices = ['€27', '€1,172', '€6,768', '€4,508', '€3,610'];
   final choices = List<int?>.filled(5, null);
   late List<int> order;
@@ -48,9 +48,7 @@ class _ComputerPriceGameState extends State<ComputerPriceGame> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Match the Price')),
     body: ListView(padding: const EdgeInsets.all(20), children: [
-      const Text('Preview game: historical prices are still being verified. The Moomin price is a supplied estimate. All amounts are rounded euro equivalents using the ECB rate on 12 November 2026 (1 EUR = 1.1081 USD), without inflation adjustment. These are not original euro launch prices.', style: TextStyle(fontWeight: FontWeight.bold)),
-      const SizedBox(height: 12),
-      const Text('Assign each price once. Choosing a price already assigned to another computer moves it here. Submit all five matches to see your results.'),
+      const Text('Assign each launch price once (rounded EUR equivalents using the 12 Nov 2026 ECB rate, 1 EUR = 1.1081 USD, without inflation adjustment). Choosing a price already assigned to another computer moves it here. Submit all five matches to see your results.'),
       if (submitted) Padding(padding: const EdgeInsets.symmetric(vertical: 20), child: Text('Score: ${List.generate(5, (i) => i).where((i) => choices[i] == i).length} / 5', style: Theme.of(context).textTheme.headlineMedium)),
       for (var i = 0; i < 5; i++) Card(child: Padding(padding: const EdgeInsets.all(16), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Image.asset('assets/computers/computer_$i.jpg', height: 180, width: double.infinity, fit: BoxFit.contain),

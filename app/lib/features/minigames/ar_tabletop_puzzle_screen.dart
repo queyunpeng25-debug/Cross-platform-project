@@ -2,20 +2,11 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:zenify/zenify.dart';
-
-import 'package:ar_flutter_plugin_plus/datatypes/config_planedetection.dart';
-import 'package:ar_flutter_plugin_plus/managers/ar_anchor_manager.dart';
-import 'package:ar_flutter_plugin_plus/managers/ar_location_manager.dart';
-import 'package:ar_flutter_plugin_plus/managers/ar_object_manager.dart';
-import 'package:ar_flutter_plugin_plus/managers/ar_session_manager.dart';
-import 'package:ar_flutter_plugin_plus/models/ar_hittest_result.dart';
-import 'package:ar_flutter_plugin_plus/widgets/ar_view.dart';
 
 import '../../core/controllers.dart';
 import '../../core/translation_service.dart';
@@ -39,7 +30,7 @@ class MemoryPuzzleImageSource extends PuzzleImageSource {
 
 /// Tabletop AR Sliding-Tile Final Puzzle (`3x3` square tiles with 1 corner hole):
 /// 1. Dynamic master image slicing into 3x3 grid via code.
-/// 2. Live camera / tabletop marker feed OR Native ARCore/ARKit plane anchoring.
+/// 2. Live camera / tabletop marker feed with Studio backdrop fallback.
 /// 3. Runtime image picker to swap graphics during oral exams and testing.
 /// 4. "Solve / Skip" fallback button for Demo Mode.
 class ArTabletopPuzzleScreen extends StatefulWidget {
@@ -77,17 +68,8 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
   bool _anchoredOnTable = true;
   bool _perspectiveTilt = true;
   bool _useCameraFeed = true;
-  bool _useNativeAr = false;
   bool _isSolved = false;
   int _moves = 0;
-
-  // Native AR session reference
-  ARSessionManager? _arSessionManager;
-
-  bool get _isNativeArAvailable =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS);
 
   @override
   void initState() {
@@ -108,7 +90,6 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
   void dispose() {
     _spawnController.dispose();
     _cornerFillController.dispose();
-    _arSessionManager?.dispose();
     super.dispose();
   }
 
@@ -209,23 +190,6 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
     return Offset(math.cos(angle) * radius, math.sin(angle) * radius - 30);
   }
 
-  void _onARViewCreated(
-    ARSessionManager sessionManager,
-    ARObjectManager objectManager,
-    ARAnchorManager anchorManager,
-    ARLocationManager locationManager,
-  ) {
-    _arSessionManager = sessionManager;
-    sessionManager.onPlaneOrPointTap = (List<ARHitTestResult> hits) {
-      if (hits.isNotEmpty && mounted) {
-        HapticFeedback.selectionClick();
-        setState(() {
-          _anchoredOnTable = true;
-        });
-      }
-    };
-  }
-
   Future<void> _openImagePickerSheet() async {
     await showModalBottomSheet<void>(
       context: context,
@@ -283,13 +247,8 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // 1. Background Feed: Native ARView OR MobileScanner OR Studio Backdrop
-          if (_useNativeAr && _isNativeArAvailable)
-            ARView(
-              onARViewCreated: _onARViewCreated,
-              planeDetectionConfig: PlaneDetectionConfig.horizontal,
-            )
-          else if (_useCameraFeed)
+          // 1. Background Feed: Live MobileScanner Camera OR Studio Backdrop
+          if (_useCameraFeed)
             MobileScanner(
               onDetect: (capture) {
                 for (final code in capture.barcodes) {
@@ -587,30 +546,17 @@ class _ArTabletopPuzzleScreenState extends State<ArTabletopPuzzleScreen>
                                 label: 'Hint Move',
                                 onTap: _playHintStep,
                               ),
-                            if (_isNativeArAvailable)
-                              _BottomControlChip(
-                                icon: _useNativeAr
-                                    ? Icons.layers_outlined
-                                    : Icons.view_in_ar_rounded,
-                                label: _useNativeAr
-                                    ? '3D Tabletop'
-                                    : 'Native AR Plane',
-                                onTap: () => setState(() {
-                                  _useNativeAr = !_useNativeAr;
-                                }),
+                            _BottomControlChip(
+                              icon: _useCameraFeed
+                                  ? Icons.videocam_outlined
+                                  : Icons.videocam_off_outlined,
+                              label: _useCameraFeed
+                                  ? 'AR Camera On'
+                                  : 'Tabletop Studio',
+                              onTap: () => setState(
+                                () => _useCameraFeed = !_useCameraFeed,
                               ),
-                            if (!_useNativeAr)
-                              _BottomControlChip(
-                                icon: _useCameraFeed
-                                    ? Icons.videocam_outlined
-                                    : Icons.videocam_off_outlined,
-                                label: _useCameraFeed
-                                    ? 'AR Camera On'
-                                    : 'Tabletop Studio',
-                                onTap: () => setState(
-                                  () => _useCameraFeed = !_useCameraFeed,
-                                ),
-                              ),
+                            ),
                             if (showImagePickerButton)
                               _BottomControlChip(
                                 icon: Icons.image_outlined,

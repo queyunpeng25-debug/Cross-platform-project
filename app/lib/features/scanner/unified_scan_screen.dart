@@ -373,6 +373,24 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
     }
   }
 
+  Future<void> _launchExternalUrlSafely(String rawUrl) async {
+    final uri = Uri.tryParse(rawUrl);
+    if (uri == null) return;
+    var launched = false;
+    try {
+      launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      launched = false;
+    }
+    if (!launched && mounted) {
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: TrText('Could not open external link: $rawUrl')),
+        );
+    }
+  }
+
   Future<void> _applyVisualPlaceMatch(PlaceVisualMatch match) async {
     if (!mounted) return;
     unawaited(HapticFeedback.selectionClick());
@@ -391,12 +409,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
           content: Text('Recognised ${match.label}'),
           action: SnackBarAction(
             label: 'Subway Menu',
-            onPressed: () {
-              final uri = Uri.tryParse(externalUrl);
-              if (uri != null) {
-                unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
-              }
-            },
+            onPressed: () => unawaited(_launchExternalUrlSafely(externalUrl)),
           ),
         ),
       );
@@ -578,10 +591,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
         setState(() {
           _statusMessage = 'Opening $title...';
         });
-        final uri = Uri.tryParse(url);
-        if (uri != null) {
-          await launchUrl(uri, mode: LaunchMode.externalApplication);
-        }
+        await _launchExternalUrlSafely(url);
         if (mounted && url.toLowerCase().contains('subway')) {
           widget.onStationMatched('canteen');
         }

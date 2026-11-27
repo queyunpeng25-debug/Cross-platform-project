@@ -125,8 +125,8 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
     );
   }
 
-  Future<void> _openSubwayMenu() async {
-    final uri = Uri.tryParse(_subwayMenuUrl);
+  Future<void> _openExternalUrl(String rawUrl) async {
+    final uri = Uri.tryParse(rawUrl);
     if (uri == null) return;
     var launched = false;
     try {
@@ -138,19 +138,16 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
       ScaffoldMessenger.maybeOf(context)
         ?..hideCurrentSnackBar()
         ..showSnackBar(
-          const SnackBar(
-            content: TrText('Could not open external link: $_subwayMenuUrl'),
+          SnackBar(
+            content: TrText('Could not open external link: $rawUrl'),
           ),
         );
     }
   }
 
-  Future<void> _openCanteenMenu() async {
-    await launchUrl(
-      Uri.parse(_canteenMenuUrl),
-      mode: LaunchMode.externalApplication,
-    );
-  }
+  Future<void> _openSubwayMenu() => _openExternalUrl(_subwayMenuUrl);
+
+  Future<void> _openCanteenMenu() => _openExternalUrl(_canteenMenuUrl);
 
   void _submitDemoReview() {
     FocusScope.of(context).unfocus();
