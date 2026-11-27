@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:zenify/zenify.dart';
 
 import '../../core/controllers.dart';
+import '../../core/device_capabilities.dart';
 import '../../core/models.dart';
 import '../../core/translation_service.dart';
 import '../../ui/puzzle_icon.dart';
@@ -117,6 +118,9 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
 
   TourProgressController get _progress => widget.progress;
   StationCatalogRepository get _catalog => widget.progress.catalog;
+  bool get _supportsCameraScan => DeviceCapabilities.supportsCameraScan;
+  bool get _supportsArExperiences => DeviceCapabilities.supportsArExperiences;
+  bool get _autoUnlockStations => DeviceCapabilities.autoUnlockStations;
 
   @override
   void initState() {
@@ -278,6 +282,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
   }
 
   Future<void> _locateMe() async {
+    if (!_supportsCameraScan && widget.scanLauncher == null) return;
     final launcher = widget.scanLauncher ?? _openCameraScanner;
     final target = await launcher(
       context,
@@ -365,7 +370,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
       builder: (context) => SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: const MapLegend(),
+          child: MapLegend(showMobileFeatures: _supportsCameraScan),
         ),
       ),
     );
@@ -510,7 +515,10 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
                       ],
                       _buildFloorListCard(context, s),
                       const SizedBox(height: 12),
-                      _card(context, child: const MapLegend()),
+                      _card(
+                        context,
+                        child: MapLegend(showMobileFeatures: _supportsCameraScan),
+                      ),
                     ],
                   ),
                 ),
@@ -584,19 +592,21 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
             ],
           ),
         ),
-        const SizedBox(width: 8),
-        if (iconOnlyLocate)
-          IconButton.filled(
-            tooltip: 'Locate me (scan a QR code)',
-            onPressed: _locateMe,
-            icon: const Icon(Icons.qr_code_scanner_rounded),
-          )
-        else
-          FilledButton.icon(
-            onPressed: _locateMe,
-            icon: const Icon(Icons.qr_code_scanner_rounded),
-            label: const TrText('Locate me'),
-          ),
+        if (_supportsCameraScan) ...[
+          const SizedBox(width: 8),
+          if (iconOnlyLocate)
+            IconButton.filled(
+              tooltip: 'Locate me (scan a QR code)',
+              onPressed: _locateMe,
+              icon: const Icon(Icons.qr_code_scanner_rounded),
+            )
+          else
+            FilledButton.icon(
+              onPressed: _locateMe,
+              icon: const Icon(Icons.qr_code_scanner_rounded),
+              label: const TrText('Locate me'),
+            ),
+        ],
       ],
     );
   }
@@ -614,7 +624,9 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
       ),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: position == null ? _locateMe : () => _showUser(position),
+        onTap: position == null
+            ? (_supportsCameraScan ? _locateMe : null)
+            : () => _showUser(position),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
@@ -622,9 +634,11 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
               const Icon(Icons.my_location_rounded, color: kYouAreHereRed, size: 18),
               const SizedBox(width: 8),
               if (position == null)
-                const Expanded(
+                Expanded(
                   child: TrText(
-                    'Scan a QR code to show where you are',
+                    _supportsCameraScan
+                        ? 'Scan a QR code to show where you are'
+                        : 'Tap a floor or station to explore',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -647,29 +661,31 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
                   ),
                 ),
               ],
-              const SizedBox(width: 8),
-              Semantics(
-                label:
-                    'Puzzle pieces collected: ${_progress.collectedPuzzleCount} of ${_progress.totalPuzzleStations}',
-                excludeSemantics: true,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    PuzzlePieceIcon(
-                      collected: _progress.collectedPuzzleCount > 0,
-                      size: 16,
-                      activeColor: kPuzzleGold,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${_progress.collectedPuzzleCount}/${_progress.totalPuzzleStations}',
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
+              if (_supportsArExperiences) ...[
+                const SizedBox(width: 8),
+                Semantics(
+                  label:
+                      'Puzzle pieces collected: ${_progress.collectedPuzzleCount} of ${_progress.totalPuzzleStations}',
+                  excludeSemantics: true,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      PuzzlePieceIcon(
+                        collected: _progress.collectedPuzzleCount > 0,
+                        size: 16,
+                        activeColor: kPuzzleGold,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      Text(
+                        '${_progress.collectedPuzzleCount}/${_progress.totalPuzzleStations}',
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -728,11 +744,12 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
         const Icon(Icons.place_rounded, size: 16),
         'Stations',
       ),
-      chip(
-        MapLayer.puzzlePieces,
-        const PuzzlePieceIcon(collected: true, size: 16, activeColor: kPuzzleGold),
-        'Puzzle pieces',
-      ),
+      if (_supportsArExperiences)
+        chip(
+          MapLayer.puzzlePieces,
+          const PuzzlePieceIcon(collected: true, size: 16, activeColor: kPuzzleGold),
+          'Puzzle pieces',
+        ),
       chip(
         MapLayer.callPods,
         const Icon(Icons.phone_in_talk_rounded, size: 16, color: kCallPodGlow),
@@ -942,7 +959,9 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
 
     // 4. Tour stations (with puzzle-piece badges).
     final showStations = _layers.contains(MapLayer.stations);
-    final showPuzzle = _layers.contains(MapLayer.puzzlePieces);
+    final showPuzzle =
+        _supportsArExperiences && _layers.contains(MapLayer.puzzlePieces);
+    final allowBrowseAll = s.demoUnlock || _autoUnlockStations;
     for (final station in _catalog.stations) {
       if (CsBuildingMapData.floorFor(station) != _floor) continue;
       final placement = CsBuildingMapData.placementFor(station);
@@ -957,7 +976,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
         final status = _progress.statusFor(station.id);
         final unlocked = _progress.isStationUnlocked(
           station.id,
-          demoUnlockAll: s.demoUnlock,
+          demoUnlockAll: allowBrowseAll,
         );
         final puzzle = (!showPuzzle || !station.hasPuzzlePiece)
             ? PuzzleBadge.none
@@ -1115,7 +1134,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
     final status = _progress.statusFor(station.id);
     final unlocked = _progress.isStationUnlocked(
       station.id,
-      demoUnlockAll: s.demoUnlock,
+      demoUnlockAll: s.demoUnlock || _autoUnlockStations,
     );
     final collected = _progress.hasCollectedPiece(station.id);
     final color = CsStatusColors.forStatus(status);
@@ -1145,7 +1164,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
             ),
             if (!unlocked)
               const MapStatusPill(icon: Icons.lock_rounded, label: 'Locked'),
-            if (station.hasPuzzlePiece)
+            if (_supportsArExperiences && station.hasPuzzlePiece)
               MapStatusPill(
                 color: collected ? kPuzzleGold : null,
                 leading: PuzzlePieceIcon(
@@ -1194,12 +1213,14 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
               ),
             ],
           ),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(
-            onPressed: _locateMe,
-            icon: const Icon(Icons.qr_code_scanner_rounded),
-            label: const TrText('Scan a QR code'),
-          ),
+          if (_supportsCameraScan) ...[
+            const SizedBox(height: 10),
+            OutlinedButton.icon(
+              onPressed: _locateMe,
+              icon: const Icon(Icons.qr_code_scanner_rounded),
+              label: const TrText('Scan a QR code'),
+            ),
+          ],
         ],
       ],
     );
@@ -1242,13 +1263,15 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
               icon: const Icon(Icons.my_location_rounded),
               label: const TrText("I'm here"),
             ),
-          const SizedBox(height: 8),
-          TrText(
-            'Tip: scan the "You are here" QR sticker at this spot to update your position automatically.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.64),
+          if (_supportsCameraScan) ...[
+            const SizedBox(height: 8),
+            TrText(
+              'Tip: scan the "You are here" QR sticker at this spot to update your position automatically.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.64),
+              ),
             ),
-          ),
+          ],
         ],
       ],
     );
@@ -1281,8 +1304,10 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
           ),
           const SizedBox(height: 8),
           if (position == null)
-            const TrText(
-              'Scan any station QR code or a "You are here" sticker to show where you are.',
+            TrText(
+              _supportsCameraScan
+                  ? 'Scan any station QR code or a "You are here" sticker to show where you are.'
+                  : 'Select any station on the map or sidebar to explore the building.',
             )
           else ...[
             TrText(
@@ -1299,8 +1324,12 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
                 Text('·', style: muted),
                 TrText(
                   position is MarkerUserPosition
-                      ? 'from a "You are here" QR code'
-                      : 'last station you scanned',
+                      ? (_supportsCameraScan
+                            ? 'from a "You are here" QR code'
+                            : 'selected map spot')
+                      : (_supportsCameraScan
+                            ? 'last station you scanned'
+                            : 'selected station'),
                   style: muted,
                 ),
               ],
@@ -1313,29 +1342,74 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
             ),
           ],
           const Divider(height: 26),
-          Row(
-            children: [
-              const PuzzlePieceIcon(collected: true, size: 18, activeColor: kPuzzleGold),
-              const SizedBox(width: 8),
-              const Expanded(child: TrText('Puzzle pieces collected')),
-              Text(
-                '${_progress.collectedPuzzleCount} / ${_progress.totalPuzzleStations}',
-                style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Icon(Icons.flag_rounded, size: 18, color: CsStatusColors.visitedGreen),
-              const SizedBox(width: 8),
-              const Expanded(child: TrText('Stations visited')),
-              Text(
-                '${math.min(s.visitedCount, totalStations)} / $totalStations',
-                style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800),
-              ),
-            ],
-          ),
+          if (_supportsArExperiences) ...[
+            Row(
+              children: [
+                const PuzzlePieceIcon(
+                  collected: true,
+                  size: 18,
+                  activeColor: kPuzzleGold,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(child: TrText('Puzzle pieces collected')),
+                Text(
+                  '${_progress.collectedPuzzleCount} / ${_progress.totalPuzzleStations}',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(
+                  Icons.flag_rounded,
+                  size: 18,
+                  color: CsStatusColors.visitedGreen,
+                ),
+                const SizedBox(width: 8),
+                const Expanded(child: TrText('Stations visited')),
+                Text(
+                  '${math.min(s.visitedCount, totalStations)} / $totalStations',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
+          ] else ...[
+            Row(
+              children: [
+                Icon(
+                  Icons.explore_outlined,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TrText('All $totalStations stations open to browse'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Icon(
+                  Icons.lock_outline_rounded,
+                  size: 18,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TrText(
+                    'QR scanning & AR puzzle hunt are mobile-only',
+                    style: muted,
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -1397,7 +1471,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
                 final placement = CsBuildingMapData.placementFor(station);
                 final unlocked = _progress.isStationUnlocked(
                   station.id,
-                  demoUnlockAll: s.demoUnlock,
+                  demoUnlockAll: s.demoUnlock || _autoUnlockStations,
                 );
                 final selection = _Selection.station(station.id);
                 return tile(
@@ -1410,7 +1484,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (!unlocked) const Icon(Icons.lock_rounded, size: 16),
-                      if (station.hasPuzzlePiece) ...[
+                      if (_supportsArExperiences && station.hasPuzzlePiece) ...[
                         const SizedBox(width: 6),
                         PuzzlePieceIcon(
                           collected: _progress.hasCollectedPiece(station.id),
@@ -1436,7 +1510,7 @@ class _CsBuildingMapScreenState extends State<CsBuildingMapScreen>
                 color: place.kind == MapPlaceKind.callPod ? kCallPodGlow : null,
               ),
               title: place.label,
-              trailing: place.hasQrMarker
+              trailing: _supportsCameraScan && place.hasQrMarker
                   ? Tooltip(
                       message: 'Has a "You are here" QR sticker',
                       child: Icon(

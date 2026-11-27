@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:zenify/zenify.dart';
 
 import '../core/controllers.dart';
+import '../core/device_capabilities.dart';
 import '../core/models.dart';
 import '../core/translation_service.dart';
 import 'puzzle_icon.dart';
@@ -48,6 +49,10 @@ class SideMenuPanel extends StatelessWidget {
       final isDark = theme.brightness == Brightness.dark;
 
       final demoUnlock = settings.demoUnlockAll.value;
+      final isLaptop = DeviceCapabilities.isLaptopMode;
+      final showArPuzzles = DeviceCapabilities.supportsArExperiences;
+      final allowBrowseAll =
+          demoUnlock || DeviceCapabilities.autoUnlockStations;
       final stations = progress.catalog.stations;
       final finalReady = progress.isFinalPuzzleReady(demoUnlockAll: demoUnlock);
 
@@ -122,45 +127,40 @@ class SideMenuPanel extends StatelessWidget {
                             StationVisitStatus.current,
                         isUnlocked: progress.isStationUnlocked(
                           station.id,
-                          demoUnlockAll: demoUnlock,
+                          demoUnlockAll: allowBrowseAll,
                         ),
-                        isDemoMode: demoUnlock,
                         hasPiece: progress.hasCollectedPiece(station.id),
+                        showPuzzleBadge: showArPuzzles,
                         isDark: isDark,
-                        onTapUnlocked: () {
-                          if (demoUnlock) {
-                            _invokeMenuAction(
-                              context,
-                              () => onSelectStation(station.id),
-                            );
-                          } else {
-                            final isCurrent = progress.statusFor(station.id) ==
-                                StationVisitStatus.current;
-                            if (isCurrent) {
-                              _invokeMenuAction(context, () {});
-                            } else {
-                              ScaffoldMessenger.of(context)
-                                ..hideCurrentSnackBar()
-                                ..showSnackBar(
-                                  const SnackBar(
-                                    behavior: SnackBarBehavior.floating,
-                                    duration: Duration(seconds: 2),
-                                    content: TrText(
-                                      'Scan the dedicated QR code on-site to switch to this area.',
-                                    ),
-                                  ),
-                                );
-                            }
-                          }
-                        },
+                        onTapUnlocked: () => _invokeMenuAction(
+                          context,
+                          () => onSelectStation(station.id),
+                        ),
                       ),
                       const SizedBox(height: 4),
                     ],
-                    if (finalReady) ...[
+                    if (showArPuzzles && finalReady) ...[
                       const SizedBox(height: 12),
                       _FinalPuzzleMenuButton(
                         onTap: () =>
                             _invokeMenuAction(context, onOpenFinalPuzzle),
+                      ),
+                    ] else if (isLaptop) ...[
+                      const SizedBox(height: 12),
+                      _LockedFinalPuzzleMenuRow(
+                        onTap: () {
+                          ScaffoldMessenger.maybeOf(context)
+                            ?..hideCurrentSnackBar()
+                            ..showSnackBar(
+                              const SnackBar(
+                                behavior: SnackBarBehavior.floating,
+                                duration: Duration(seconds: 3),
+                                content: TrText(
+                                  'Collect AR puzzle pieces on a phone or tablet to unlock the Final AR Puzzle.',
+                                ),
+                              ),
+                            );
+                        },
                       ),
                     ],
                   ],
@@ -191,69 +191,74 @@ class SideMenuPanel extends StatelessWidget {
                 ),
               ),
 
-              // 4. Sober Demo Mode Prototype Toggle Bar
-              SafeArea(
-                top: false,
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: isDark
-                        ? CsAppTheme.darkSurface
-                        : const Color(0xFFEFEDE7),
-                    border: Border(
-                      top: BorderSide(color: scheme.outlineVariant),
+              // 4. Bottom Footer: Demo Mode Toggle (Mobile) OR Laptop Mode Notice
+              if (isLaptop)
+                _LaptopModeFooterBar(isDark: isDark)
+              else
+                SafeArea(
+                  top: false,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? CsAppTheme.darkSurface
+                          : const Color(0xFFEFEDE7),
+                      border: Border(
+                        top: BorderSide(color: scheme.outlineVariant),
+                      ),
                     ),
-                  ),
-                  child: Semantics(
-                    toggled: demoUnlock,
-                    label: 'DEMO MODE Prototype Build unlock switch',
-                    child: InkWell(
-                      onTap: () => settings.setDemoUnlockAll(!demoUnlock),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(minHeight: 52),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 18,
-                            vertical: 6,
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    TrText(
-                                      'DEMO MODE · Prototype Build',
-                                      style: theme.textTheme.labelMedium
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: 0.2,
-                                          ),
-                                    ),
-                                    TrText(
-                                      demoUnlock
-                                          ? 'All stations unlocked for preview'
-                                          : 'Scan stations on-site to unlock',
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        fontSize: 11,
-                                        color: scheme.onSurfaceVariant,
+                    child: Semantics(
+                      toggled: demoUnlock,
+                      label: 'DEMO MODE Prototype Build unlock switch',
+                      child: InkWell(
+                        onTap: () => settings.setDemoUnlockAll(!demoUnlock),
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(minHeight: 52),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 6,
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      TrText(
+                                        'DEMO MODE · Prototype Build',
+                                        style: theme.textTheme.labelMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                              letterSpacing: 0.2,
+                                            ),
                                       ),
-                                    ),
-                                  ],
+                                      TrText(
+                                        demoUnlock
+                                            ? 'All stations unlocked for preview'
+                                            : 'Scan stations on-site to unlock',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              fontSize: 11,
+                                              color: scheme.onSurfaceVariant,
+                                            ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              Switch(
-                                value: demoUnlock,
-                                onChanged: settings.setDemoUnlockAll,
-                              ),
-                            ],
+                                Switch(
+                                  value: demoUnlock,
+                                  onChanged: settings.setDemoUnlockAll,
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
             ],
           ),
         ),
@@ -270,7 +275,7 @@ class _SoberStationRow extends StatelessWidget {
     required this.hasPiece,
     required this.isDark,
     required this.onTapUnlocked,
-    this.isDemoMode = false,
+    this.showPuzzleBadge = true,
   });
 
   final StationSpec station;
@@ -279,7 +284,7 @@ class _SoberStationRow extends StatelessWidget {
   final bool hasPiece;
   final bool isDark;
   final VoidCallback onTapUnlocked;
-  final bool isDemoMode;
+  final bool showPuzzleBadge;
 
   @override
   Widget build(BuildContext context) {
@@ -353,7 +358,7 @@ class _SoberStationRow extends StatelessWidget {
               ],
             ),
           ),
-          if (station.hasPuzzlePiece) ...[
+          if (showPuzzleBadge && station.hasPuzzlePiece) ...[
             const SizedBox(width: 10),
             Semantics(
               label: hasPiece
@@ -382,7 +387,7 @@ class _SoberStationRow extends StatelessWidget {
     }
 
     return Semantics(
-      button: isDemoMode || isCurrent,
+      button: true,
       selected: isCurrent,
       label: '${station.title}, ${station.floorLabel}',
       child: Material(
@@ -447,6 +452,131 @@ class _FinalPuzzleMenuButton extends StatelessWidget {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LockedFinalPuzzleMenuRow extends StatelessWidget {
+  const _LockedFinalPuzzleMenuRow({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Semantics(
+      button: true,
+      label: 'Final AR Puzzle, Mobile only',
+      child: Material(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 52),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: 0.7),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.lock_outline_rounded,
+                  size: 18,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TrText(
+                        'Final AR Puzzle',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      TrText(
+                        'Mobile only',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontSize: 11,
+                          color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LaptopModeFooterBar extends StatelessWidget {
+  const _LaptopModeFooterBar({required this.isDark});
+
+  final bool isDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        decoration: BoxDecoration(
+          color: isDark ? CsAppTheme.darkSurface : const Color(0xFFEFEDE7),
+          border: Border(top: BorderSide(color: scheme.outlineVariant)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        child: Row(
+          children: [
+            Icon(
+              Icons.laptop_mac_rounded,
+              size: 18,
+              color: scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TrText(
+                    'Laptop Guide Mode',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                  TrText(
+                    'Browse all stations · AR mobile-only',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontSize: 11,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

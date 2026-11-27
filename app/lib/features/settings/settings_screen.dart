@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:zenify/zenify.dart';
 
 import '../../core/controllers.dart';
+import '../../core/device_capabilities.dart';
 import '../../core/models.dart';
 import '../../core/translation_service.dart';
 import '../../ui/language_dialog.dart';
@@ -98,6 +99,12 @@ class SettingsScreen extends StatelessWidget {
           settings.languageCode.value,
         );
         final demoUnlock = settings.demoUnlockAll.value;
+        final isLaptop = DeviceCapabilities.isLaptopMode;
+        final experienceIcon = switch (DeviceCapabilities.experience) {
+          DeviceExperience.nativeMobile => Icons.view_in_ar_rounded,
+          DeviceExperience.mobileWeb => Icons.smartphone_rounded,
+          DeviceExperience.laptop => Icons.laptop_mac_rounded,
+        };
 
         final visitedIds = progress.visitedStationIds.value;
         final collectedIds = progress.collectedPuzzleIds.value;
@@ -281,62 +288,117 @@ class SettingsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
 
-                // 3. Demo Mode (Unlock All Stations & Final Puzzle)
+                // 3. Active Device Experience
                 Card(
-                  child: Semantics(
-                    toggled: demoUnlock,
-                    label: 'Demo Mode, unlock all stations and final puzzle',
-                    child: SwitchListTile(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(24),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 10,
-                      ),
-                      secondary: Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: demoUnlock
-                              ? CsStatusColors.visitedGreen.withValues(
-                                  alpha: 0.18,
-                                )
-                              : scheme.tertiaryContainer,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Icon(
-                          Icons.science_rounded,
-                          color: demoUnlock
-                              ? CsStatusColors.visitedGreen
-                              : scheme.onTertiaryContainer,
-                        ),
-                      ),
-                      title: TrText(
-                        'Demo Mode (Unlock All Stations & Final Puzzle)',
-                        style: theme.textTheme.titleMedium,
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: TrText(
-                          'Bypasses physical scan-to-unlock gates so evaluators and teammates can inspect any station or the Final Puzzle immediately.',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
+                  child: Padding(
+                    padding: const EdgeInsets.all(20),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: scheme.tertiaryContainer,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(
+                            experienceIcon,
+                            color: scheme.onTertiaryContainer,
                           ),
                         ),
-                      ),
-                      value: demoUnlock,
-                      onChanged: settings.setDemoUnlockAll,
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              TrText(
+                                'Device Experience',
+                                style: theme.textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 2),
+                              TrText(
+                                DeviceCapabilities.experienceLabel,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: scheme.primary,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              TrText(
+                                DeviceCapabilities.experienceDescription,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
                 const SizedBox(height: 16),
 
-                // 4. Meet the Team & Contributions
+                // 4. Demo Mode (Mobile only — Laptop auto-unlocks stations)
+                if (!isLaptop) ...[
+                  Card(
+                    child: Semantics(
+                      toggled: demoUnlock,
+                      label: 'Demo Mode, unlock all stations and final puzzle',
+                      child: SwitchListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 10,
+                        ),
+                        secondary: Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: demoUnlock
+                                ? CsStatusColors.visitedGreen.withValues(
+                                    alpha: 0.18,
+                                  )
+                                : scheme.tertiaryContainer,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(
+                            Icons.science_rounded,
+                            color: demoUnlock
+                                ? CsStatusColors.visitedGreen
+                                : scheme.onTertiaryContainer,
+                          ),
+                        ),
+                        title: TrText(
+                          'Demo Mode (Unlock All Stations & Final Puzzle)',
+                          style: theme.textTheme.titleMedium,
+                        ),
+                        subtitle: Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: TrText(
+                            'Bypasses physical scan-to-unlock gates so evaluators and teammates can inspect any station or the Final Puzzle immediately.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        value: demoUnlock,
+                        onChanged: settings.setDemoUnlockAll,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+
+                // 5. Meet the Team
                 Card(
                   child: Semantics(
                     button: true,
-                    label: 'Meet the Team and Contributions',
+                    label: 'Meet the Team',
                     child: InkWell(
                       borderRadius: BorderRadius.circular(24),
                       onTap: onOpenTeam,
@@ -364,12 +426,12 @@ class SettingsScreen extends StatelessWidget {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     TrText(
-                                      'Meet the Team & Contributions',
+                                      'Meet the Team',
                                       style: theme.textTheme.titleMedium,
                                     ),
                                     const SizedBox(height: 2),
                                     TrText(
-                                      'Explore the five-member engineering collective behind CS Explorer.',
+                                      'Meet the five Aalto University students behind CS Explorer.',
                                       style:
                                           theme.textTheme.bodySmall?.copyWith(
                                         color: scheme.onSurfaceVariant,
@@ -390,78 +452,81 @@ class SettingsScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
 
-                // 5. Reset Tour Progress
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              width: 42,
-                              height: 42,
-                              decoration: BoxDecoration(
-                                color: CsStatusColors.currentRed.withValues(
-                                  alpha: 0.14,
-                                ),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: const Icon(
-                                Icons.restart_alt_rounded,
-                                color: CsStatusColors.currentRed,
-                              ),
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  TrText(
-                                    'Tour Progress',
-                                    style: theme.textTheme.titleMedium,
+                // 6. Reset Tour Progress (Mobile only — on-site scan & AR puzzle state)
+                if (!isLaptop) ...[
+                  const SizedBox(height: 16),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  color: CsStatusColors.currentRed.withValues(
+                                    alpha: 0.14,
                                   ),
-                                  const SizedBox(height: 2),
-                                  TrText(
-                                    'Visited $visitedCount/$totalStations stations · Collected $collectedCount/$totalPuzzles puzzle pieces',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: scheme.onSurfaceVariant,
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: const Icon(
+                                  Icons.restart_alt_rounded,
+                                  color: CsStatusColors.currentRed,
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    TrText(
+                                      'Tour Progress',
+                                      style: theme.textTheme.titleMedium,
+                                    ),
+                                    const SizedBox(height: 2),
+                                    TrText(
+                                      'Visited $visitedCount/$totalStations stations · Collected $collectedCount/$totalPuzzles puzzle pieces',
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          SizedBox(
+                            width: double.infinity,
+                            child: Semantics(
+                              button: true,
+                              label: 'Reset Tour Progress',
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: CsStatusColors.currentRed,
+                                  side: BorderSide(
+                                    color: CsStatusColors.currentRed.withValues(
+                                      alpha: 0.55,
                                     ),
                                   ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        SizedBox(
-                          width: double.infinity,
-                          child: Semantics(
-                            button: true,
-                            label: 'Reset Tour Progress',
-                            child: OutlinedButton.icon(
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: CsStatusColors.currentRed,
-                                side: BorderSide(
-                                  color: CsStatusColors.currentRed.withValues(
-                                    alpha: 0.55,
-                                  ),
                                 ),
+                                onPressed: () =>
+                                    _confirmResetProgress(context, progress),
+                                icon: const Icon(Icons.delete_outline_rounded),
+                                label: const TrText('Reset Tour Progress'),
                               ),
-                              onPressed: () =>
-                                  _confirmResetProgress(context, progress),
-                              icon: const Icon(Icons.delete_outline_rounded),
-                              label: const TrText('Reset Tour Progress'),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
           ),

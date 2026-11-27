@@ -4,8 +4,9 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/models.dart';
 import '../../core/translation_service.dart';
 
-/// Museum-curator style credits screen showcasing [TeamMemberProfile.projectTeam]
-/// (Andrea, Mustafa, Juhani, Yunpeng, and Nico) and their individual modules.
+/// Museum-curator style team screen showcasing [TeamMemberProfile.projectTeam]
+/// (Andrea, Mustafa, Juhani, Yunpeng, and Niccolò) with their LinkedIn
+/// backgrounds and profile links.
 class TeamScreen extends StatelessWidget {
   const TeamScreen({
     super.key,
@@ -14,7 +15,7 @@ class TeamScreen extends StatelessWidget {
 
   final VoidCallback onBackToLobby;
 
-  Future<void> _openGithubProfile(BuildContext context, String rawUrl) async {
+  Future<void> _openExternalUrl(BuildContext context, String rawUrl) async {
     final uri = Uri.tryParse(rawUrl);
     if (uri == null) return;
     var launched = false;
@@ -81,7 +82,7 @@ class TeamScreen extends StatelessWidget {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: TrText(
-                        'EXHIBITION CREDITS · AALTO UNIVERSITY',
+                        'PROJECT TEAM · AALTO UNIVERSITY',
                         style: theme.textTheme.labelSmall?.copyWith(
                           fontWeight: FontWeight.w800,
                           letterSpacing: 0.7,
@@ -98,7 +99,7 @@ class TeamScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 6),
                     TrText(
-                      'Designed and engineered collaboratively as an interactive cross-platform guide to the Computer Science building — uniting architecture, positioning, AR recognition, campus dining, and playful discovery.',
+                      'Meet the five Aalto University students behind CS Explorer — an interactive cross-platform guide to the Computer Science building.',
                       style: theme.textTheme.bodyMedium?.copyWith(
                         color: scheme.onSurfaceVariant,
                         height: 1.45,
@@ -112,9 +113,11 @@ class TeamScreen extends StatelessWidget {
               for (final member in members) ...[
                 _CuratorMemberCard(
                   member: member,
+                  onOpenLinkedin: () =>
+                      _openExternalUrl(context, member.linkedinUrl),
                   onOpenGithub: member.githubUrl == null
                       ? null
-                      : () => _openGithubProfile(context, member.githubUrl!),
+                      : () => _openExternalUrl(context, member.githubUrl!),
                 ),
                 const SizedBox(height: 14),
               ],
@@ -129,10 +132,12 @@ class TeamScreen extends StatelessWidget {
 class _CuratorMemberCard extends StatelessWidget {
   const _CuratorMemberCard({
     required this.member,
+    required this.onOpenLinkedin,
     this.onOpenGithub,
   });
 
   final TeamMemberProfile member;
+  final VoidCallback onOpenLinkedin;
   final VoidCallback? onOpenGithub;
 
   @override
@@ -210,7 +215,7 @@ class _CuratorMemberCard extends StatelessWidget {
                           ),
                         ),
                         child: TrText(
-                          member.roleTitle,
+                          member.headline,
                           style: theme.textTheme.labelMedium?.copyWith(
                             color: badgeText,
                             fontWeight: FontWeight.w700,
@@ -224,27 +229,40 @@ class _CuratorMemberCard extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             TrText(
-              member.contributionSummary,
+              member.bio,
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: scheme.onSurface.withValues(alpha: 0.88),
                 height: 1.48,
               ),
             ),
-            if (onOpenGithub != null) ...[
-              const SizedBox(height: 14),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Semantics(
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                Semantics(
                   button: true,
-                  label: 'Open ${member.name} GitHub profile',
-                  child: OutlinedButton.icon(
-                    onPressed: onOpenGithub,
+                  label: member.hasDirectLinkedinProfile
+                      ? 'Open ${member.name} LinkedIn profile'
+                      : 'Open LinkedIn',
+                  child: FilledButton.icon(
+                    onPressed: onOpenLinkedin,
                     icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                    label: const TrText('GitHub Profile'),
+                    label: const Text('LinkedIn'),
                   ),
                 ),
-              ),
-            ],
+                if (onOpenGithub != null)
+                  Semantics(
+                    button: true,
+                    label: 'Open ${member.name} GitHub profile',
+                    child: OutlinedButton.icon(
+                      onPressed: onOpenGithub,
+                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                      label: const Text('GitHub'),
+                    ),
+                  ),
+              ],
+            ),
           ],
         ),
       ),

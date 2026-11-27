@@ -1,7 +1,10 @@
 import 'package:cs_building_guide/core/controllers.dart';
+import 'package:cs_building_guide/core/device_capabilities.dart';
 import 'package:cs_building_guide/core/models.dart';
 import 'package:cs_building_guide/core/translation_service.dart';
+import 'package:cs_building_guide/features/minigames/spatial_minigame_engine.dart';
 import 'package:cs_building_guide/main.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -36,6 +39,13 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     Zen.reset();
+    DeviceCapabilities.debugExperienceOverride = null;
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  tearDown(() {
+    DeviceCapabilities.debugExperienceOverride = null;
+    debugDefaultTargetPlatformOverride = null;
   });
 
   test('Language catalog follows exact priority order and translation labels', () {
@@ -146,4 +156,68 @@ void main() {
       expect(find.textContaining('CS Building Lobby'), findsWidgets);
     },
   );
+
+  testWidgets(
+    'Side menu lets visitors revisit unlocked stations and current station with Demo Mode off',
+    (tester) async {
+      DeviceCapabilities.debugExperienceOverride = DeviceExperience.nativeMobile;
+      tester.view.physicalSize = const Size(1024, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        CsExplorerRootApp(
+          catalog: sharedCatalog,
+          translationService: _InstantTranslationService(),
+          showFirstLaunchPrompt: false,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final progress = Zen.find<TourProgressController>();
+      expect(Zen.find<AppSettingsController>().demoUnlockAll.value, isFalse);
+
+      // Scan Greenhouse, then move on to Computers so Greenhouse is visited (not current).
+      progress.unlockAndSetCurrentStation('greenhouse');
+      progress.unlockAndSetCurrentStation('computers');
+      await tester.pump();
+
+      // Reopen previously visited Greenhouse from the side menu.
+      await tester.tap(find.text('Learning Hub Greenhouse'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Play Greenhouse Activity'), findsOneWidget);
+      expect(
+        find.text('Scan the dedicated QR code on-site to switch to this area.'),
+        findsNothing,
+      );
+
+      // Navigate away to Settings, then tap the current station (Greenhouse) to return.
+      await tester.tap(find.text('Settings'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('App & Menu Language'), findsOneWidget);
+
+      await tester.tap(find.text('Learning Hub Greenhouse'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Play Greenhouse Activity'), findsOneWidget);
+
+      // Locked stations remain non-clickable while Demo Mode is off.
+      await tester.tap(find.text('Student Guild Rooms'));
+      await tester.pump();
+      expect(find.text('Play Greenhouse Activity'), findsOneWidget);
+      expect(find.text('Student Guild Channels & Links'), findsNothing);
+    },
+  );
+
+  test('SpatialPreflightService.requestCameraPermission handles non-mobile and plugin errors safely', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    expect(await SpatialPreflightService.requestCameraPermission(), isTrue);
+
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    expect(await SpatialPreflightService.requestCameraPermission(), isFalse);
+  });
 }

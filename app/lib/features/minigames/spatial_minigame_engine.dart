@@ -163,7 +163,16 @@ class SpatialPreflightService {
           defaultTargetPlatform == TargetPlatform.iOS);
 
   static Future<bool> requestCameraPermission() async {
-    final status = await Permission.camera.request();
-    return status.isGranted;
+    if (kIsWeb ||
+        (defaultTargetPlatform != TargetPlatform.android &&
+            defaultTargetPlatform != TargetPlatform.iOS)) {
+      return true;
+    }
+    try {
+      final status = await Permission.camera.request();
+      return status.isGranted;
+    } catch (_) {
+      return false;
+    }
   }
 }

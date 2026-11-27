@@ -183,7 +183,9 @@ class OffFloorBanner extends StatelessWidget {
 
 /// Explains every symbol on the map. Used in a card (wide) or bottom sheet.
 class MapLegend extends StatelessWidget {
-  const MapLegend({super.key});
+  const MapLegend({super.key, this.showMobileFeatures = true});
+
+  final bool showMobileFeatures;
 
   @override
   Widget build(BuildContext context) {
@@ -229,18 +231,32 @@ class MapLegend extends StatelessWidget {
           ),
           'You are here',
         ),
-        row(dot(CsStatusColors.currentRed), 'Current station (last one you scanned)'),
+        row(
+          dot(CsStatusColors.currentRed),
+          showMobileFeatures
+              ? 'Current station (last one you scanned)'
+              : 'Current station',
+        ),
         row(dot(CsStatusColors.visitedGreen), 'Visited station'),
         row(dot(CsStatusColors.unvisitedBlue), 'Station not visited yet'),
-        row(const Icon(Icons.lock_rounded, size: 16), 'Locked: scan its marker on site'),
-        row(
-          const PuzzlePieceIcon(collected: false, size: 18),
-          'Puzzle piece still hidden at this station',
-        ),
-        row(
-          const PuzzlePieceIcon(collected: true, size: 18, activeColor: kPuzzleGold),
-          'Puzzle piece collected',
-        ),
+        if (showMobileFeatures) ...[
+          row(
+            const Icon(Icons.lock_rounded, size: 16),
+            'Locked: scan its marker on site',
+          ),
+          row(
+            const PuzzlePieceIcon(collected: false, size: 18),
+            'Puzzle piece still hidden at this station',
+          ),
+          row(
+            const PuzzlePieceIcon(
+              collected: true,
+              size: 18,
+              activeColor: kPuzzleGold,
+            ),
+            'Puzzle piece collected',
+          ),
+        ],
         row(
           Container(
             width: 18,
@@ -260,10 +276,11 @@ class MapLegend extends StatelessWidget {
           ),
           'Call pods: walk-in, not bookable',
         ),
-        row(
-          const Icon(Icons.qr_code_2_rounded, size: 18),
-          'Spot with a "You are here" QR sticker',
-        ),
+        if (showMobileFeatures)
+          row(
+            const Icon(Icons.qr_code_2_rounded, size: 18),
+            'Spot with a "You are here" QR sticker',
+          ),
         row(
           SizedBox.square(
             dimension: 18,
