@@ -332,11 +332,11 @@ class SettingsScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
 
-                // 4. Meet the Team & Contributions
+                // 4. Meet the Team
                 Card(
                   child: Semantics(
                     button: true,
-                    label: 'Meet the Team and Contributions',
+                    label: 'Meet the Team',
                     child: InkWell(
                       borderRadius: BorderRadius.circular(24),
                       onTap: onOpenTeam,
@@ -364,12 +364,12 @@ class SettingsScreen extends StatelessWidget {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     TrText(
-                                      'Meet the Team & Contributions',
+                                      'Meet the Team',
                                       style: theme.textTheme.titleMedium,
                                     ),
                                     const SizedBox(height: 2),
                                     TrText(
-                                      'Explore the five-member engineering collective behind CS Explorer.',
+                                      'Meet the five Aalto University students behind CS Explorer.',
                                       style:
                                           theme.textTheme.bodySmall?.copyWith(
                                         color: scheme.onSurfaceVariant,

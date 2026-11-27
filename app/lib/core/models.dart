@@ -344,63 +344,76 @@ final class TeamMemberProfile {
   const TeamMemberProfile({
     required this.name,
     required this.initials,
-    required this.roleTitle,
-    required this.contributionSummary,
+    required this.headline,
+    required this.bio,
     required this.accentColor,
+    required this.linkedinUrl,
     this.githubUrl,
   });
 
   final String name;
   final String initials;
-  final String roleTitle;
-  final String contributionSummary;
+  final String headline;
+  final String bio;
   final Color accentColor;
+  final String linkedinUrl;
   final String? githubUrl;
+
+  bool get hasDirectLinkedinProfile =>
+      linkedinUrl.contains('linkedin.com/in/');
 
   static const List<TeamMemberProfile> projectTeam = [
     TeamMemberProfile(
-      name: 'Andrea',
+      name: 'Andrea Gollo',
       initials: 'AG',
-      roleTitle: 'App Architecture, Lobby Guide & Building Stations',
-      contributionSummary:
-          'Designed the cross-platform app shell, navigation & Frosted Split UI, global translation setup, Lobby guide, and CS building info stations.',
+      headline:
+          'Applied AI & Human-Centered Systems MSc · EIT Digital (KTH & Aalto)',
+      bio:
+          'EIT Digital double-degree Master’s student in ICT Innovation at KTH Royal Institute of Technology and Aalto University, focusing on Edge AI, XR, user-centered design, and product prototyping. Former President of BEST Milan and EY Campus Ambassador.',
       accentColor: Color(0xFF2B2927),
+      linkedinUrl: 'https://www.linkedin.com/in/gollo-andrea/',
       githubUrl: 'https://github.com/GolAndrea',
     ),
     TeamMemberProfile(
-      name: 'Mustafa',
+      name: 'Mustafa Alalawi',
       initials: 'MA',
-      roleTitle: 'Interactive CS Building Map & Positioning',
-      contributionSummary:
-          'Develops the interactive floor-plan map, live station status markers, phone booth highlights, and QR-based user position updates.',
+      headline: 'Software Engineer @ Elisa · CS Student at Aalto University',
+      bio:
+          'Computer Science student at Aalto University and Software Engineer at Elisa in Helsinki, building AI governance and RAG platforms with Vertex AI and Next.js. Previously worked in software development and IT systems at SSAB and Tavastia.',
       accentColor: Color(0xFF56514A),
+      linkedinUrl: 'https://www.linkedin.com/in/mustafa0alalawi/',
       githubUrl: 'https://github.com/Mustafa0Alalawi',
     ),
     TeamMemberProfile(
       name: 'Juhani',
       initials: 'JL',
-      roleTitle: 'Canteen Menu, Dish Reviews & Subway Scanner',
-      contributionSummary:
-          'Implements the lunch place module with daily menu scraping & translation, student dish reviews, and Subway logo recognition.',
+      headline: 'Computer Science Student · Aalto University',
+      bio:
+          'Computer Science student at Aalto University interested in software engineering, interactive systems, and cross-platform application development.',
       accentColor: Color(0xFF7A6B58),
+      linkedinUrl: 'https://www.linkedin.com/',
       githubUrl: 'https://github.com/juhalo',
     ),
     TeamMemberProfile(
-      name: 'Yunpeng',
+      name: 'Yunpeng Que',
       initials: 'YQ',
-      roleTitle: 'Continuous AR Portrait Tracking & Retro PC Exhibit',
-      contributionSummary:
-          'Built native ARCore/ARKit continuous portrait recognition with 3D GLB panels, unified QR frame decoding, and the Evolution of Computers exhibit & game.',
+      headline:
+          'Human-Computer Interaction & Design MSc · Aalto University & KTH',
+      bio:
+          'EIT Digital double-degree Master’s student in Human-Computer Interaction and Design at Aalto University and KTH Royal Institute of Technology, with a Bachelor of Engineering in Digital Media Technology from Shanghai University.',
       accentColor: Color(0xFF45413C),
+      linkedinUrl: 'https://www.linkedin.com/in/yunpeng-que-900b2a444/',
       githubUrl: 'https://github.com/queyunpeng25-debug',
     ),
     TeamMemberProfile(
-      name: 'Niccolò',
+      name: 'Niccolò Sobrero',
       initials: 'NS',
-      roleTitle: 'Floating AR Puzzle Hunt & Station Minigames',
-      contributionSummary:
-          'Creates the building-wide floating AR puzzle piece capture experience, Greenhouse interactive activity, and the final puzzle assembly game.',
+      headline:
+          'Human-Computer Interaction & Design MSc · EIT Digital (PoliMi & Aalto)',
+      bio:
+          'EIT Digital double-degree Master’s student in Human-Computer Interaction and Design at Politecnico di Milano and Aalto University, with a minor in Innovation & Entrepreneurship. Experienced in backend and web development, virtual reality, and AI-driven interactive applications.',
       accentColor: Color(0xFF8A7B68),
+      linkedinUrl: 'https://www.linkedin.com/in/niccol%C3%B2-sobrero/',
       githubUrl: 'https://github.com/NiccoloSobrero',
     ),
   ];
