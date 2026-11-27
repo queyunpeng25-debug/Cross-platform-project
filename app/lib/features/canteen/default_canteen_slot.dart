@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:zenify/zenify.dart';
 
 import '../../core/controllers.dart';
+import '../../core/device_capabilities.dart';
 import '../../core/models.dart';
 import '../../core/translation_service.dart';
 import 'canteen_menu_service.dart';
@@ -125,8 +126,23 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
   }
 
   Future<void> _openSubwayMenu() async {
-    final uri = Uri.parse(_subwayMenuUrl);
-    await launchUrl(uri, mode: LaunchMode.externalApplication);
+    final uri = Uri.tryParse(_subwayMenuUrl);
+    if (uri == null) return;
+    var launched = false;
+    try {
+      launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      launched = false;
+    }
+    if (!launched && mounted) {
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: TrText('Could not open external link: $_subwayMenuUrl'),
+          ),
+        );
+    }
   }
 
   Future<void> _openCanteenMenu() async {
@@ -380,7 +396,9 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
                       ),
                       const SizedBox(height: 6),
                       TrText(
-                        'Scanning the Subway sign in Smart Scan or tapping below opens the full Subway Finland menu.',
+                        DeviceCapabilities.supportsCameraScan
+                            ? 'Scanning the Subway sign in Smart Scan or tapping below opens the full Subway Finland menu.'
+                            : 'Tap below to open the full Subway Finland menu.',
                         style: theme.textTheme.bodySmall?.copyWith(
                           height: 1.35,
                           color: theme.colorScheme.onSurface.withValues(

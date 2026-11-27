@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:zenify/zenify.dart';
@@ -9,6 +8,7 @@ import '../ar_portrait_screen.dart';
 import '../computer_exhibit.dart';
 import '../content.dart';
 import '../core/controllers.dart';
+import '../core/device_capabilities.dart';
 import '../core/models.dart';
 import '../core/translation_service.dart';
 import '../features/scanner/unified_scan_screen.dart';
@@ -107,20 +107,39 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
     settings.markLanguagePromptHandled();
   }
 
+  void _showMobileOnlyNotice(String message) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+          content: TrText(message),
+        ),
+      );
+  }
+
   /// Universal Back rule requested by Andrea:
   /// - From ANY screen other than Lobby -> goes straight to Lobby!
   /// - From Lobby -> closes the app / browser window naturally.
   void _goBackToLobby() {
     if (_destination == ShellDestination.lobby) {
-      if (!kIsWeb &&
-          (defaultTargetPlatform == TargetPlatform.android ||
-              defaultTargetPlatform == TargetPlatform.iOS)) {
+      if (DeviceCapabilities.isNativeMobile) {
         unawaited(SystemNavigator.pop());
       }
       return;
     }
+    if (DeviceCapabilities.isLaptopMode) {
+      Zen.find<TourProgressController>().setCurrentIfUnlocked(
+        'lobby',
+        demoUnlockAll: true,
+      );
+    }
     setState(() {
       _activeCatchStationId = null;
+      _selectedStationId = 'lobby';
       _destination = ShellDestination.lobby;
     });
   }
@@ -136,21 +155,25 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
     final station = catalog.findById(stationId);
     if (station == null) return;
 
+    final allowBrowseAll =
+        settings.demoUnlockAll.value || DeviceCapabilities.autoUnlockStations;
+
     if (fromScanner) {
       progress.unlockAndSetCurrentStation(station.id);
     } else {
       if (!progress.isStationUnlocked(
         station.id,
-        demoUnlockAll: settings.demoUnlockAll.value,
+        demoUnlockAll: allowBrowseAll,
       )) {
         return;
       }
       progress.setCurrentIfUnlocked(
         station.id,
-        demoUnlockAll: settings.demoUnlockAll.value,
+        demoUnlockAll: allowBrowseAll,
       );
     }
 
+    ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
     setState(() {
       _activeCatchStationId = null;
       _selectedStationId = station.id;
@@ -161,13 +184,35 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
   }
 
   void _openScanner({String? catchStationId}) {
+    if (!DeviceCapabilities.supportsCameraScan) {
+      _showMobileOnlyNotice(
+        'Camera scanning is available on mobile devices.',
+      );
+      return;
+    }
     setState(() {
       _activeCatchStationId = catchStationId;
       _destination = ShellDestination.scan;
     });
   }
 
+  void _openFinalPuzzle() {
+    if (!DeviceCapabilities.supportsArExperiences) {
+      _showMobileOnlyNotice(
+        'The Final AR Puzzle requires collecting AR pieces on a mobile device.',
+      );
+      return;
+    }
+    setState(() => _destination = ShellDestination.finalPuzzle);
+  }
+
   Future<void> _triggerCatchPuzzleForStation(StationSpec station) async {
+    if (!DeviceCapabilities.supportsArExperiences) {
+      _showMobileOnlyNotice(
+        'The AR puzzle piece hunt is available on mobile devices.',
+      );
+      return;
+    }
     final progress = Zen.find<TourProgressController>();
     final minigameSlot = Zen.find<MinigameFeatureSlot>();
     await minigameSlot.launchFloatingPuzzleCatch(
@@ -185,6 +230,12 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
       case SecondaryActionKind.openScanner:
         _openScanner();
       case SecondaryActionKind.greenhouseMinigame:
+        if (!DeviceCapabilities.supportsArExperiences) {
+          _showMobileOnlyNotice(
+            'The Greenhouse camera activity is available on mobile devices.',
+          );
+          return;
+        }
         final progress = Zen.find<TourProgressController>();
         final minigameSlot = Zen.find<MinigameFeatureSlot>();
         await minigameSlot.launchGreenhouseActivity(
@@ -196,9 +247,13 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
           MaterialPageRoute<void>(builder: (_) => const ComputerExhibit()),
         );
       case SecondaryActionKind.portraitArScanner:
-        if (!kIsWeb &&
-            (defaultTargetPlatform == TargetPlatform.android ||
-                defaultTargetPlatform == TargetPlatform.iOS)) {
+        if (DeviceCapabilities.isLaptopMode) {
+          _showMobileOnlyNotice(
+            '3D AR Portrait View is available on mobile devices.',
+          );
+          return;
+        }
+        if (DeviceCapabilities.supportsNative3dAr) {
           final guideContent = await GuideContent.load();
           if (!mounted) return;
           await Navigator.of(context).push<void>(
@@ -283,6 +338,17 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
         );
 
       case ShellDestination.scan:
+        if (!DeviceCapabilities.supportsCameraScan) {
+          return LobbyHomeScreen(
+            showMenuButton: !isExpandedLayout,
+            onOpenSideMenu: _openSideMenu,
+            onOpenScan: _openScanner,
+            onOpenMap: () => setState(() => _destination = ShellDestination.map),
+            onOpenStation: (id) => _openStationById(id),
+            onCatchLobbyPuzzle: () =>
+                _triggerCatchPuzzleForStation(catalog.lobby),
+          );
+        }
         return UnifiedScanScreen(
           key: ValueKey<String>('scan-${_activeCatchStationId ?? "general"}'),
           shutterController: _shutterController,
@@ -321,6 +387,17 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
         return TeamScreen(onBackToLobby: _goBackToLobby);
 
       case ShellDestination.finalPuzzle:
+        if (!DeviceCapabilities.supportsArExperiences) {
+          return LobbyHomeScreen(
+            showMenuButton: !isExpandedLayout,
+            onOpenSideMenu: _openSideMenu,
+            onOpenScan: _openScanner,
+            onOpenMap: () => setState(() => _destination = ShellDestination.map),
+            onOpenStation: (id) => _openStationById(id),
+            onCatchLobbyPuzzle: () =>
+                _triggerCatchPuzzleForStation(catalog.lobby),
+          );
+        }
         return minigameSlot.buildFinalPuzzleScreen(
           context,
           progress: progress,
@@ -345,6 +422,7 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
               child: FrostedSplitDock(
                 activeTab: _currentDockTab,
                 shutterPulse: _activeCatchStationId != null,
+                showScanTab: DeviceCapabilities.supportsCameraScan,
                 onSelectInfos: () {
                   if (_destination != ShellDestination.lobby) {
                     _goBackToLobby();
@@ -392,8 +470,7 @@ class _CsExplorerShellState extends State<CsExplorerShell> {
                 setState(() => _destination = ShellDestination.settings),
             onOpenTeam: () =>
                 setState(() => _destination = ShellDestination.team),
-            onOpenFinalPuzzle: () =>
-                setState(() => _destination = ShellDestination.finalPuzzle),
+            onOpenFinalPuzzle: _openFinalPuzzle,
           );
 
           return Scaffold(

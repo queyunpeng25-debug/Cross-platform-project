@@ -227,6 +227,7 @@ void main() {
       }
       expect(_floorSelected(1), findsOneWidget);
       expect(_stationPin('Lobby'), findsOneWidget);
+      expect(_stationPin('Research wings'), findsOneWidget);
       expect(_stationPin('Retro computers'), findsNothing); // that one is on 2F
       expect(find.text('You are here'), findsOneWidget);
       expect(find.textContaining('OpenStreetMap'), findsOneWidget);
@@ -240,7 +241,8 @@ void main() {
 
       expect(_floorSelected(2), findsOneWidget);
       expect(_stationPin('Retro computers'), findsOneWidget);
-      expect(_stationPin('Research wings'), findsOneWidget);
+      expect(_stationPin('TUAS shortcut'), findsOneWidget);
+      expect(_stationPin('Research wings'), findsNothing); // located on 1F
       expect(_placePin('call_pods_2f'), findsOneWidget);
       // The visitor is still on 1F, so the map offers a way back.
       expect(find.text('You are on'), findsOneWidget);

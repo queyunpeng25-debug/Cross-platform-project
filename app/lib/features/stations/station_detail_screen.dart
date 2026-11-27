@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:zenify/zenify.dart';
 
 import '../../core/controllers.dart';
+import '../../core/device_capabilities.dart';
 import '../../core/models.dart';
 import '../../core/translation_service.dart';
 import '../../ui/puzzle_icon.dart';
@@ -53,14 +54,34 @@ class StationDetailScreen extends StatelessWidget {
     return false;
   }
 
+  bool get _isSecondaryActionMobileOnly =>
+      station.secondaryActionKind == SecondaryActionKind.portraitArScanner ||
+      station.secondaryActionKind == SecondaryActionKind.greenhouseMinigame ||
+      station.secondaryActionKind == SecondaryActionKind.openScanner;
+
+  String _resolvedSecondaryActionLabel() {
+    if (DeviceCapabilities.isMobileWeb &&
+        station.secondaryActionKind == SecondaryActionKind.portraitArScanner) {
+      return 'Scan Portrait (Web Camera)';
+    }
+    return station.secondaryActionLabel!;
+  }
+
   Future<void> _launchExternalLink(BuildContext context, String rawUrl) async {
     final uri = Uri.tryParse(rawUrl);
     if (uri == null) return;
-    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    var ok = false;
+    try {
+      ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      ok = false;
+    }
     if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: TrText('Could not open link: $rawUrl')),
-      );
+      ScaffoldMessenger.maybeOf(context)
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: TrText('Could not open link: $rawUrl')),
+        );
     }
   }
 
@@ -86,11 +107,15 @@ class StationDetailScreen extends StatelessWidget {
         ? bottomInset + 92.0
         : bottomInset + 16.0;
 
+    final isLaptop = DeviceCapabilities.isLaptopMode;
+    final showArPuzzles = DeviceCapabilities.supportsArExperiences;
+    final showPuzzleCta = station.hasPuzzlePiece && showArPuzzles;
     final showSecondaryAction =
         !isRootLobbyView &&
         station.secondaryActionKind != null &&
         station.secondaryActionLabel != null &&
         onRunSecondaryAction != null;
+    final isSecondaryLocked = isLaptop && _isSecondaryActionMobileOnly;
 
     return ColoredBox(
       color: const Color(0xFF1A1918),
@@ -169,10 +194,12 @@ class StationDetailScreen extends StatelessWidget {
                             onTap: onOpenSideMenu,
                           ),
                         const Spacer(),
-                        if (station.hasPuzzlePiece)
+                        if (station.hasPuzzlePiece || isLaptop)
                           _FrostedStatusPill(
                             floorLabel: station.floorLabel,
                             pieceCaught: pieceCaught,
+                            showPuzzleIcon:
+                                showArPuzzles && station.hasPuzzlePiece,
                           ),
                       ],
                     ),
@@ -271,43 +298,52 @@ class StationDetailScreen extends StatelessWidget {
                       ),
 
                       // 4. Bottom Matte Charcoal Action Bar
-                      Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          22,
-                          8,
-                          22,
-                          bottomClearance,
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (showSecondaryAction) ...[
-                              _SoberActionButton(
-                                label: station.secondaryActionLabel!,
-                                icon: Icons.explore_outlined,
-                                filled: false,
-                                onTap: onRunSecondaryAction!,
-                              ),
-                              const SizedBox(height: 10),
-                            ],
-                            if (station.hasPuzzlePiece)
-                              _SoberActionButton(
-                                label: pieceCaught
-                                    ? 'Puzzle Piece Collected · Replay AR'
-                                    : station.puzzleCtaLabel,
-                                customLeading: PuzzlePieceIcon(
-                                  collected: pieceCaught,
-                                  size: 19,
-                                  activeColor: const Color(0xFFD9CBB8),
-                                  inactiveColor: const Color(0xFFF7F5F0),
+                      if (showSecondaryAction || showPuzzleCta)
+                        Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            22,
+                            8,
+                            22,
+                            bottomClearance,
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (showSecondaryAction) ...[
+                                if (isSecondaryLocked)
+                                  _LockedMobileActionButton(
+                                    label: station.secondaryActionLabel!,
+                                    onTap: onRunSecondaryAction!,
+                                  )
+                                else
+                                  _SoberActionButton(
+                                    label: _resolvedSecondaryActionLabel(),
+                                    icon: Icons.explore_outlined,
+                                    filled: false,
+                                    onTap: onRunSecondaryAction!,
+                                  ),
+                                if (showPuzzleCta) const SizedBox(height: 10),
+                              ],
+                              if (showPuzzleCta)
+                                _SoberActionButton(
+                                  label: pieceCaught
+                                      ? 'Puzzle Piece Collected · Replay AR'
+                                      : station.puzzleCtaLabel,
+                                  customLeading: PuzzlePieceIcon(
+                                    collected: pieceCaught,
+                                    size: 19,
+                                    activeColor: const Color(0xFFD9CBB8),
+                                    inactiveColor: const Color(0xFFF7F5F0),
+                                  ),
+                                  filled: true,
+                                  onTap: onCatchPuzzlePiece,
                                 ),
-                                filled: true,
-                                onTap: onCatchPuzzlePiece,
-                              ),
-                          ],
-                        ),
-                      ),
+                            ],
+                          ),
+                        )
+                      else if (reserveBottomDockSpace)
+                        SizedBox(height: bottomClearance),
                     ],
                   ),
                 ),
@@ -386,10 +422,12 @@ class _FrostedStatusPill extends StatelessWidget {
   const _FrostedStatusPill({
     required this.floorLabel,
     required this.pieceCaught,
+    this.showPuzzleIcon = true,
   });
 
   final String floorLabel;
   final bool pieceCaught;
+  final bool showPuzzleIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -411,7 +449,9 @@ class _FrostedStatusPill extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 150),
+                constraints: BoxConstraints(
+                  maxWidth: showPuzzleIcon ? 150 : 220,
+                ),
                 child: TrText(
                   floorLabel,
                   maxLines: 1,
@@ -423,13 +463,15 @@ class _FrostedStatusPill extends StatelessWidget {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              PuzzlePieceIcon(
-                collected: pieceCaught,
-                size: 16,
-                activeColor: const Color(0xFFD9CBB8),
-                inactiveColor: Colors.white.withValues(alpha: 0.55),
-              ),
+              if (showPuzzleIcon) ...[
+                const SizedBox(width: 8),
+                PuzzlePieceIcon(
+                  collected: pieceCaught,
+                  size: 16,
+                  activeColor: const Color(0xFFD9CBB8),
+                  inactiveColor: Colors.white.withValues(alpha: 0.55),
+                ),
+              ],
             ],
           ),
         ),
@@ -769,6 +811,84 @@ class _SoberActionButton extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                       letterSpacing: 0.1,
                       color: Color(0xFFF7F5F0),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LockedMobileActionButton extends StatelessWidget {
+  const _LockedMobileActionButton({
+    required this.label,
+    required this.onTap,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: '$label, Mobile only',
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 52),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.18),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.lock_outline_rounded,
+                  size: 18,
+                  color: const Color(0xFFE8E2D8).withValues(alpha: 0.72),
+                ),
+                const SizedBox(width: 10),
+                Flexible(
+                  child: TrText(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: const Color(0xFFE8E2D8).withValues(alpha: 0.78),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const TrText(
+                    'Mobile only',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFFD9CBB8),
                     ),
                   ),
                 ),

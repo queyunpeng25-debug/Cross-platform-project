@@ -22,6 +22,7 @@ class FrostedSplitDock extends StatelessWidget {
     required this.onSelectScanOrShutter,
     required this.onSelectMap,
     this.shutterPulse = false,
+    this.showScanTab = true,
   });
 
   final ActiveDockTab activeTab;
@@ -29,6 +30,7 @@ class FrostedSplitDock extends StatelessWidget {
   final VoidCallback onSelectScanOrShutter;
   final VoidCallback onSelectMap;
   final bool shutterPulse;
+  final bool showScanTab;
 
   static const Duration _splitDuration = Duration(milliseconds: 340);
 
@@ -36,7 +38,7 @@ class FrostedSplitDock extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final isScanMode = activeTab == ActiveDockTab.scan;
+    final isScanMode = showScanTab && activeTab == ActiveDockTab.scan;
 
     final glassFill = isDark
         ? const Color(0xFF1C211F).withValues(alpha: 0.78)
@@ -47,6 +49,87 @@ class FrostedSplitDock extends StatelessWidget {
     final activePillFill = isDark
         ? theme.colorScheme.primary.withValues(alpha: 0.22)
         : theme.colorScheme.primary.withValues(alpha: 0.12);
+
+    if (!showScanTab) {
+      return SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(16, 6, 16, 14),
+        child: Center(
+          child: Container(
+            width: 264,
+            height: 60,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(32),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: isDark ? 0.34 : 0.10),
+                  blurRadius: 22,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(32),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: glassFill,
+                    borderRadius: BorderRadius.circular(32),
+                    border: Border.all(color: glassBorder),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 5,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _DockSidePill(
+                          width: 122,
+                          splitProgress: 0,
+                          isActive: activeTab == ActiveDockTab.infos,
+                          isSplitMode: false,
+                          showBackArrow: false,
+                          icon: activeTab == ActiveDockTab.infos
+                              ? Icons.museum_rounded
+                              : Icons.museum_outlined,
+                          label: 'Infos',
+                          semanticsLabel: 'Infos tab',
+                          glassFill: glassFill,
+                          glassBorder: glassBorder,
+                          activePillFill: activePillFill,
+                          isDark: isDark,
+                          onTap: onSelectInfos,
+                        ),
+                        _DockSidePill(
+                          width: 122,
+                          splitProgress: 0,
+                          isActive: activeTab == ActiveDockTab.map,
+                          isSplitMode: false,
+                          showBackArrow: false,
+                          icon: activeTab == ActiveDockTab.map
+                              ? Icons.map_rounded
+                              : Icons.map_outlined,
+                          label: 'Map',
+                          semanticsLabel: 'Map tab',
+                          glassFill: glassFill,
+                          glassBorder: glassBorder,
+                          activePillFill: activePillFill,
+                          isDark: isDark,
+                          onTap: onSelectMap,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
 
     return SafeArea(
       top: false,

@@ -15,6 +15,7 @@ import '../../ar_portrait_screen.dart';
 import '../../computer_exhibit.dart';
 import '../../content.dart';
 import '../../core/controllers.dart';
+import '../../core/device_capabilities.dart';
 import '../../core/models.dart';
 import '../../core/translation_service.dart';
 import 'live_frame_grabber.dart';
@@ -84,10 +85,7 @@ class _UnifiedScanScreenState extends State<UnifiedScanScreen>
   String _statusMessage =
       'Point at a QR code, door logo, or building sign — or press Shutter to scan.';
 
-  bool get _supportsNativeArPortraits =>
-      !kIsWeb &&
-      (defaultTargetPlatform == TargetPlatform.android ||
-          defaultTargetPlatform == TargetPlatform.iOS);
+  bool get _supportsNativeArPortraits => DeviceCapabilities.supportsNative3dAr;
 
   @override
   void initState() {
