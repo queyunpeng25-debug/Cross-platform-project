@@ -474,33 +474,39 @@ class _DefaultCanteenViewState extends State<_DefaultCanteenView> {
                         ],
                       ),
                       const SizedBox(height: 10),
-                      Row(
+                      Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8,
+                        runSpacing: 4,
                         children: [
                           const TrText(
                             'Rating:',
                             style: TextStyle(fontWeight: FontWeight.w600),
                           ),
-                          const SizedBox(width: 8),
-                          for (var star = 1; star <= 5; star++)
-                            Semantics(
-                              button: true,
-                              label: 'Rate $star stars',
-                              child: IconButton(
-                                constraints: const BoxConstraints(
-                                  minWidth: 48,
-                                  minHeight: 48,
+                          Wrap(
+                            children: [
+                              for (var star = 1; star <= 5; star++)
+                                Semantics(
+                                  button: true,
+                                  label: 'Rate $star stars',
+                                  child: IconButton(
+                                    constraints: const BoxConstraints(
+                                      minWidth: 48,
+                                      minHeight: 48,
+                                    ),
+                                    onPressed: () => setState(() {
+                                      _selectedStars = star;
+                                    }),
+                                    icon: Icon(
+                                      star <= _selectedStars
+                                          ? Icons.star_rounded
+                                          : Icons.star_border_rounded,
+                                      color: const Color(0xFFD99B26),
+                                    ),
+                                  ),
                                 ),
-                                onPressed: () => setState(() {
-                                  _selectedStars = star;
-                                }),
-                                icon: Icon(
-                                  star <= _selectedStars
-                                      ? Icons.star_rounded
-                                      : Icons.star_border_rounded,
-                                  color: const Color(0xFFD99B26),
-                                ),
-                              ),
-                            ),
+                            ],
+                          ),
                         ],
                       ),
                       const SizedBox(height: 8),

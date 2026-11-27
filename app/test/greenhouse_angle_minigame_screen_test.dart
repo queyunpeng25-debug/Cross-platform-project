@@ -7,9 +7,14 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  late StationCatalogRepository sharedCatalog;
+
+  setUpAll(() async {
+    sharedCatalog = await StationCatalogRepository.loadFromAssets();
+  });
+
   testWidgets('GreenhouseAngleMinigameScreen UI, zoom, and demo mode tests', (tester) async {
-    final catalog = await StationCatalogRepository.loadFromAssets();
-    final progress = TourProgressController(catalog: catalog);
+    final progress = TourProgressController(catalog: sharedCatalog);
     final target = kGreenhouseAngleTargets.first;
     final dummyMatcher = GreenhouseAngleMatcher.fromFrames([]);
 
@@ -80,4 +85,51 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
   });
+
+  testWidgets(
+    'GreenhouseAngleMinigameScreen header fits compact phones and keeps shuffle button tappable',
+    (tester) async {
+      final progress = TourProgressController(catalog: sharedCatalog);
+      final target = kGreenhouseAngleTargets.first;
+      final dummyMatcher = GreenhouseAngleMatcher.fromFrames([]);
+
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: const TextScaler.linear(1.3),
+            ),
+            child: child!,
+          ),
+          home: GreenhouseAngleMinigameScreen(
+            progress: progress,
+            initialTarget: target,
+            matcher: dummyMatcher,
+            isDemoMode: true,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(tester.takeException(), isNull);
+
+      final shuffleBtn = find.byTooltip('Try Another Photo (Demo Mode)');
+      expect(shuffleBtn, findsOneWidget);
+      final shuffleCenter = tester.getCenter(shuffleBtn);
+      expect(shuffleCenter.dx, lessThan(360.0));
+      await tester.tap(shuffleBtn);
+      await tester.pump(const Duration(milliseconds: 100));
+
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    },
+  );
 }
